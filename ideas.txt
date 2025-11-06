@@ -1,0 +1,7 @@
+Proper KFold with state and whatever stratification
+Using the tabular metadata - learned weights for auxiliary task, gradient projection, another model trained on the tabular
+Constraint loss
+
+
+Info:
+Applying transform on big image then splitting decreases perf: 0.49850+-0.15532 => 0.49575+-0.15545

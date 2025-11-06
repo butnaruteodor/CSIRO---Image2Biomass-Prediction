@@ -1,0 +1,25 @@
+2025-11-06 17:53:00,799 INFO    MainThread:28833 [wandb_init.py:setup_run_log_directory():706] Logging user logs to /home/teo/kaggle/csiro/wandb/run-20251106_175300-v9zyxap8/logs/debug.log
+2025-11-06 17:53:00,799 INFO    MainThread:28833 [wandb_init.py:setup_run_log_directory():707] Logging internal logs to /home/teo/kaggle/csiro/wandb/run-20251106_175300-v9zyxap8/logs/debug-internal.log
+2025-11-06 17:53:00,799 INFO    MainThread:28833 [wandb_init.py:monkeypatch_ipython():625] configuring jupyter hooks <wandb.sdk.wandb_init._WandbInit object at 0x7f6cfc0893f0>
+2025-11-06 17:53:00,800 INFO    MainThread:28833 [wandb_init.py:init():833] calling init triggers
+2025-11-06 17:53:00,800 INFO    MainThread:28833 [wandb_init.py:init():838] wandb.init called with sweep_config: {}
+config: {'BASE_PATH': 'csiro-biomass', 'TRAIN_CSV': 'csiro-biomass/train.csv', 'TRAIN_IMAGE_DIR': 'csiro-biomass/train', 'MODEL_DIR': 'out', 'N_FOLDS': 5, 'MODEL_NAME': 'convnextv2_atto', 'IMG_SIZE': 512, 'PRETRAINED': True, 'FREEZE_BACKBONE': False, 'BATCH_SIZE': 2, 'GRAD_ACC': 4, 'NUM_WORKERS': 1, 'EPOCHS': 15, 'LR': 0.0001, 'WD': 0.01, 'PATIENCE': 5, 'DETERMINISTIC': True, 'SEED': 122, 'TARGET_COLS': ['Dry_Total_g', 'GDM_g', 'Dry_Green_g'], 'DERIVED_COLS': ['Dry_Clover_g', 'Dry_Dead_g'], 'ALL_TARGET_COLS': ['Dry_Green_g', 'Dry_Dead_g', 'Dry_Clover_g', 'GDM_g', 'Dry_Total_g'], 'R2_WEIGHTS': array([0.1, 0.1, 0.1, 0.2, 0.5]), 'W_SPECIES': 0.25, 'W_STATE': 0.25, 'W_CONT': 0.5, 'DEVICE': device(type='cuda'), 'N_STATES': 4, 'N_SPECIES': 15, 'CONT_AUX_COLS': ['Pre_GSHH_NDVI', 'Height_Ave_cm', 'day_sin', 'day_cos'], 'CAT_AUX_COLS': ['State_idx', 'Species_idx'], '_wandb': {}}
+2025-11-06 17:53:00,800 INFO    MainThread:28833 [wandb_init.py:init():881] starting backend
+2025-11-06 17:53:00,800 INFO    MainThread:28833 [wandb_init.py:init():884] sending inform_init request
+2025-11-06 17:53:00,801 INFO    MainThread:28833 [wandb_init.py:init():892] backend started and connected
+2025-11-06 17:53:00,803 INFO    MainThread:28833 [wandb_run.py:_label_probe_notebook():1328] probe notebook
+2025-11-06 17:53:00,805 INFO    MainThread:28833 [wandb_init.py:init():962] updated telemetry
+2025-11-06 17:53:00,808 INFO    MainThread:28833 [wandb_init.py:init():986] communicating run to backend with 90.0 second timeout
+2025-11-06 17:53:01,756 INFO    MainThread:28833 [wandb_init.py:init():1033] starting run threads in backend
+2025-11-06 17:53:01,826 INFO    MainThread:28833 [wandb_run.py:_console_start():2506] atexit reg
+2025-11-06 17:53:01,826 INFO    MainThread:28833 [wandb_run.py:_redirect():2354] redirect: wrap_raw
+2025-11-06 17:53:01,826 INFO    MainThread:28833 [wandb_run.py:_redirect():2423] Wrapping output streams.
+2025-11-06 17:53:01,826 INFO    MainThread:28833 [wandb_run.py:_redirect():2446] Redirects installed.
+2025-11-06 17:53:01,826 INFO    MainThread:28833 [wandb_init.py:init():1073] run started, returning control to user process
+2025-11-06 17:58:53,106 INFO    MainThread:28833 [wandb_run.py:_finish():2272] finishing run butnaruteodor-universitatea-tehnic-gheorghe-asachi-din-ia-i/csiro-biomass/v9zyxap8
+2025-11-06 17:58:53,107 INFO    MainThread:28833 [jupyter.py:save_ipynb():353] not saving jupyter notebook
+2025-11-06 17:58:53,107 INFO    MainThread:28833 [wandb_init.py:_jupyter_teardown():610] cleaning up jupyter logic
+2025-11-06 17:58:53,107 INFO    MainThread:28833 [wandb_run.py:_atexit_cleanup():2471] got exitcode: 0
+2025-11-06 17:58:53,107 INFO    MainThread:28833 [wandb_run.py:_restore():2453] restore
+2025-11-06 17:58:53,107 INFO    MainThread:28833 [wandb_run.py:_restore():2459] restore done
+2025-11-06 17:58:55,026 INFO    MainThread:28833 [wandb_run.py:_footer_sync_info():3835] logging synced files

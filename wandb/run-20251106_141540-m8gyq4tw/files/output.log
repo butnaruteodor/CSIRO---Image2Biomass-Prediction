@@ -1,0 +1,28 @@
+Building model...
+Pretrained weights loaded (CPU)
+valid:  97%|█████████▋| 29/30 [00:02<00:00, 12.80it/s]/home/teo/kaggle/csiro/.venv/lib/python3.10/site-packages/torch/nn/modules/loss.py:634: UserWarning: Using a target size (torch.Size([1])) that is different to the input size (torch.Size([])). This will likely lead to incorrect results due to broadcasting. Please ensure they have the same size.
+  return F.mse_loss(input, target, reduction=self.reduction)
+[34m[1mwandb[0m: [32m[41mERROR[0m The nbformat package was not found. It is required to save notebook history.
+Epoch 01 | TrainLoss 1515.09264 | ValLoss 532.68727 | ValR² -0.2169 (BEST)
+   → SAVED (R²: -0.2169)
+Epoch 02 | TrainLoss 827.05033 | ValLoss 276.86265 | ValR² 0.3675 (BEST)
+   → SAVED (R²: 0.3675)
+Epoch 03 | TrainLoss 705.36986 | ValLoss 226.03906 | ValR² 0.4836 (BEST)
+   → SAVED (R²: 0.4836)
+Epoch 04 | TrainLoss 600.16290 | ValLoss 199.72030 | ValR² 0.5438 (BEST)
+   → SAVED (R²: 0.5438)
+Epoch 05 | TrainLoss 540.58496 | ValLoss 221.01511 | ValR² 0.4951
+Epoch 06 | TrainLoss 480.44177 | ValLoss 175.75276 | ValR² 0.5985 (BEST)
+   → SAVED (R²: 0.5985)
+Epoch 07 | TrainLoss 436.69742 | ValLoss 241.47018 | ValR² 0.4484
+Epoch 08 | TrainLoss 416.57339 | ValLoss 164.78172 | ValR² 0.6236 (BEST)
+   → SAVED (R²: 0.6236)
+Epoch 09 | TrainLoss 386.83870 | ValLoss 210.83905 | ValR² 0.5184
+Epoch 10 | TrainLoss 369.55973 | ValLoss 168.74940 | ValR² 0.6145
+Epoch 11 | TrainLoss 347.30122 | ValLoss 146.37486 | ValR² 0.6656 (BEST)
+   → SAVED (R²: 0.6656)
+Epoch 12 | TrainLoss 324.56468 | ValLoss 155.26723 | ValR² 0.6453
+Epoch 13 | TrainLoss 321.26632 | ValLoss 157.39806 | ValR² 0.6404
+Epoch 14 | TrainLoss 300.57866 | ValLoss 144.62018 | ValR² 0.6696 (BEST)
+   → SAVED (R²: 0.6696)
+Epoch 15 | TrainLoss 295.49691 | ValLoss 148.25914 | ValR² 0.6613

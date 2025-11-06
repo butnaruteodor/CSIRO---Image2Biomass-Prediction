@@ -1,0 +1,22 @@
+Building model...
+Pretrained weights loaded (CPU)
+[34m[1mwandb[0m: [32m[41mERROR[0m The nbformat package was not found. It is required to save notebook history.
+Epoch 01 | TrainLoss 1548.06788 | ValLoss 520.68567 | ValR² -0.1239 (BEST)
+   → SAVED (R²: -0.1239)
+Epoch 02 | TrainLoss 884.85476 | ValLoss 335.99275 | ValR² 0.2748 (BEST)
+   → SAVED (R²: 0.2748)
+Epoch 03 | TrainLoss 681.58075 | ValLoss 326.52577 | ValR² 0.2952 (BEST)
+   → SAVED (R²: 0.2952)
+Epoch 04 | TrainLoss 593.68832 | ValLoss 280.98681 | ValR² 0.3935 (BEST)
+   → SAVED (R²: 0.3935)
+Epoch 05 | TrainLoss 500.68356 | ValLoss 321.32054 | ValR² 0.3064
+Epoch 06 | TrainLoss 515.49503 | ValLoss 244.68546 | ValR² 0.4719 (BEST)
+   → SAVED (R²: 0.4719)
+Epoch 07 | TrainLoss 454.91518 | ValLoss 225.28027 | ValR² 0.5137 (BEST)
+   → SAVED (R²: 0.5137)
+Epoch 08 | TrainLoss 416.51494 | ValLoss 249.01042 | ValR² 0.4625
+Epoch 09 | TrainLoss 389.45105 | ValLoss 252.81399 | ValR² 0.4543
+Epoch 10 | TrainLoss 371.42755 | ValLoss 241.80330 | ValR² 0.4781
+Epoch 11 | TrainLoss 372.31810 | ValLoss 227.13950 | ValR² 0.5097
+Epoch 12 | TrainLoss 322.99214 | ValLoss 228.84099 | ValR² 0.5061
+   → EARLY STOP (no improvement in 5 epochs)

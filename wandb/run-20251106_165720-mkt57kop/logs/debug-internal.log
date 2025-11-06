@@ -1,0 +1,6 @@
+{"time":"2025-11-06T16:57:20.316616272+01:00","level":"INFO","msg":"stream: starting","core version":"0.22.3"}
+{"time":"2025-11-06T16:57:20.610493577+01:00","level":"INFO","msg":"stream: created new stream","id":"mkt57kop"}
+{"time":"2025-11-06T16:57:20.610540625+01:00","level":"INFO","msg":"handler: started","stream_id":"mkt57kop"}
+{"time":"2025-11-06T16:57:20.610595368+01:00","level":"INFO","msg":"stream: started","id":"mkt57kop"}
+{"time":"2025-11-06T16:57:20.610636458+01:00","level":"INFO","msg":"sender: started","stream_id":"mkt57kop"}
+{"time":"2025-11-06T16:57:20.610639138+01:00","level":"INFO","msg":"writer: started","stream_id":"mkt57kop"}

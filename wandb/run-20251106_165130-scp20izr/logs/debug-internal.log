@@ -1,0 +1,12 @@
+{"time":"2025-11-06T16:51:30.924115966+01:00","level":"INFO","msg":"stream: starting","core version":"0.22.3"}
+{"time":"2025-11-06T16:51:31.206877646+01:00","level":"INFO","msg":"stream: created new stream","id":"scp20izr"}
+{"time":"2025-11-06T16:51:31.206964482+01:00","level":"INFO","msg":"handler: started","stream_id":"scp20izr"}
+{"time":"2025-11-06T16:51:31.207105357+01:00","level":"INFO","msg":"stream: started","id":"scp20izr"}
+{"time":"2025-11-06T16:51:31.207124201+01:00","level":"INFO","msg":"writer: started","stream_id":"scp20izr"}
+{"time":"2025-11-06T16:51:31.207140138+01:00","level":"INFO","msg":"sender: started","stream_id":"scp20izr"}
+{"time":"2025-11-06T16:57:19.827693421+01:00","level":"INFO","msg":"fileTransfer: Close: file transfer manager closed"}
+{"time":"2025-11-06T16:57:20.305403869+01:00","level":"INFO","msg":"handler: operation stats","stats":{}}
+{"time":"2025-11-06T16:57:20.309817215+01:00","level":"INFO","msg":"stream: closing","id":"scp20izr"}
+{"time":"2025-11-06T16:57:20.309830145+01:00","level":"INFO","msg":"handler: closed","stream_id":"scp20izr"}
+{"time":"2025-11-06T16:57:20.309885503+01:00","level":"INFO","msg":"sender: closed","stream_id":"scp20izr"}
+{"time":"2025-11-06T16:57:20.309907069+01:00","level":"INFO","msg":"stream: closed","id":"scp20izr"}

@@ -1,0 +1,12 @@
+{"time":"2025-11-06T17:58:55.037994026+01:00","level":"INFO","msg":"stream: starting","core version":"0.22.3"}
+{"time":"2025-11-06T17:58:55.372529629+01:00","level":"INFO","msg":"stream: created new stream","id":"ert6hacu"}
+{"time":"2025-11-06T17:58:55.372581352+01:00","level":"INFO","msg":"handler: started","stream_id":"ert6hacu"}
+{"time":"2025-11-06T17:58:55.372675804+01:00","level":"INFO","msg":"stream: started","id":"ert6hacu"}
+{"time":"2025-11-06T17:58:55.37268232+01:00","level":"INFO","msg":"writer: started","stream_id":"ert6hacu"}
+{"time":"2025-11-06T17:58:55.372693376+01:00","level":"INFO","msg":"sender: started","stream_id":"ert6hacu"}
+{"time":"2025-11-06T18:04:48.29891378+01:00","level":"INFO","msg":"fileTransfer: Close: file transfer manager closed"}
+{"time":"2025-11-06T18:04:48.812562558+01:00","level":"INFO","msg":"handler: operation stats","stats":{}}
+{"time":"2025-11-06T18:04:48.818901421+01:00","level":"INFO","msg":"stream: closing","id":"ert6hacu"}
+{"time":"2025-11-06T18:04:48.81891333+01:00","level":"INFO","msg":"handler: closed","stream_id":"ert6hacu"}
+{"time":"2025-11-06T18:04:48.818960639+01:00","level":"INFO","msg":"sender: closed","stream_id":"ert6hacu"}
+{"time":"2025-11-06T18:04:48.818964398+01:00","level":"INFO","msg":"stream: closed","id":"ert6hacu"}
