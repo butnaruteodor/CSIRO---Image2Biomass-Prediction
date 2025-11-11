@@ -1,7 +1,0 @@
-Building model...
-Pretrained weights loaded (CPU)
-/tmp/ipykernel_32825/1012254650.py:513: UserWarning: torch.cuda.amp.GradScaler is enabled, but CUDA is not available.  Disabling.
-  scaler = GradScaler()
-train:   0%|          | 0/142 [00:00<?, ?it/s]/home/teo/kaggle/csiro/.venv/lib/python3.10/site-packages/torch/utils/data/dataloader.py:668: UserWarning: 'pin_memory' argument is set as true but no accelerator is found, then device pinned memory won't be used.
-  warnings.warn(warn_msg)
-train:  13%|█▎        | 18/142 [00:14<01:33,  1.33it/s]

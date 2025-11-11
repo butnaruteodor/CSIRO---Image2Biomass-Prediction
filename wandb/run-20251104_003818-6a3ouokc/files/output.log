@@ -1,3 +1,0 @@
-Building model...
-Pretrained weights loaded (CPU)
-[34m[1mwandb[0m: [32m[41mERROR[0m The nbformat package was not found. It is required to save notebook history.
