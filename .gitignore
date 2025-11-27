@@ -2,3 +2,4 @@
 out/
 convnext-exp1/
 wandb/
+csiro-biomass/train/*
