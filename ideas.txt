@@ -2,6 +2,8 @@ Proper KFold with state and whatever stratification
 Using the tabular metadata - learned weights for auxiliary task, gradient projection, another model trained on the tabular
 Constraint loss
 Bigger heads
+RandomShadow
+Generalized mean pooling https://www.kaggle.com/competitions/aptos2019-blindness-detection/writeups/guanshuo-xu-1st-place-solution-summary
 
 
 Info:
