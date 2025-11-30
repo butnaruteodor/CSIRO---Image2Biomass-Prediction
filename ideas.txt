@@ -4,6 +4,7 @@ Constraint loss
 Bigger heads
 RandomShadow
 Generalized mean pooling https://www.kaggle.com/competitions/aptos2019-blindness-detection/writeups/guanshuo-xu-1st-place-solution-summary
+dino + catboost https://www.kaggle.com/competitions/planttraits2024/writeups/aleksandr-korotaevskiy-9th-place-solution-dinov2-c
 
 
 Info:
