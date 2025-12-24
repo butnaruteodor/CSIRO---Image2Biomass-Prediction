@@ -1,7 +1,14 @@
 from torch.amp import autocast
-from utils.eval import *
 import torch
 from tqdm import tqdm
+from torch.utils.data import Dataset, DataLoader
+import copy
+
+from utils.eval import *
+from dataset.biomass_dataset import *
+from utils.augs import *
+from configs.deterministic import *
+from models.models import *
 
 def train_epoch_clip(model, loader, opt, scheduler, device, scaler, text_anchors):
     model.train()
@@ -28,7 +35,7 @@ def train_epoch_clip(model, loader, opt, scheduler, device, scaler, text_anchors
             scaler.step(opt)
             scaler.update()
             opt.zero_grad()
-    scheduler.step()
+    # scheduler.step()
     return running / len(loader)
 
 
@@ -139,3 +146,178 @@ def valid_epoch_base(model, loader, device):
     # Compute weighted R²
     weighted_r2 = global_weighted_r2_score(true_labels, pred_all)
     return running_loss / len(loader.dataset), weighted_r2
+
+def valid_epoch_clip(model, loader, text_anchors, device, val_index_offset=0):
+    model.eval()
+    correct_top1 = 0
+    correct_top5 = 0
+    total = 0
+    total_loss = 0
+    loss_fn = nn.CrossEntropyLoss()
+    
+    with torch.no_grad():
+        for i, batch in enumerate(tqdm(loader, desc='val', leave=False)):
+            tiles = batch["pixel_values"].squeeze(0).to(device)
+            local_index = batch["index"].to(device)
+            target_index = local_index + val_index_offset
+            
+            with torch.amp.autocast('cuda', dtype=torch.float16):
+                tile_features = model.encode_image(tiles)
+                img_embedding = tile_features.mean(dim=0, keepdim=True)
+                img_embedding = img_embedding / img_embedding.norm(dim=-1, keepdim=True)
+                
+                logit_scale = model.logit_scale.exp()
+                logits = (img_embedding @ text_anchors.T) * logit_scale
+                
+                loss = loss_fn(logits, target_index)
+                total_loss += loss.item()
+                
+                # --- CALCULATE ACCURACY ---
+                # Get the top 5 scores and their indices
+                # top5_indices shape: [1, 5]
+                _, top5_indices = logits.topk(5, dim=-1) 
+                
+                # Check Top 1
+                if top5_indices[0, 0] == target_index:
+                    correct_top1 += 1
+                # Check Top 5 (Is target inside the list of 5?)
+                if target_index in top5_indices[0]:
+                    correct_top5 += 1
+                
+                total += 1
+                
+    acc_1 = (correct_top1 / total) * 100.0
+    acc_5 = (correct_top5 / total) * 100.0
+    avg_loss = total_loss / total
+    
+    return avg_loss, acc_1, acc_5
+
+
+def train_clip(tr_df, val_df):
+    model, preprocess, tokenizer = get_lora_model()
+    model = model.to(CFG.DEVICE)
+
+    tr_set = BiomassDatasetClip(tr_df, train_aug, None, CFG.TRAIN_IMAGE_DIR, preprocess, tokenizer)
+    val_set = BiomassDatasetClip(val_df, None, None, CFG.TRAIN_IMAGE_DIR, preprocess, tokenizer)
+
+    g=get_generator()
+    tr_loader  = DataLoader(tr_set,  batch_size=CFG.BATCH_SIZE, shuffle=True,
+                                num_workers=CFG.NUM_WORKERS, pin_memory=True, drop_last=True, worker_init_fn=seed_worker,generator=g)
+    val_loader = DataLoader(val_set, batch_size=CFG.BATCH_SIZE, shuffle=False,
+                            num_workers=CFG.NUM_WORKERS, pin_memory=True, worker_init_fn=seed_worker,generator=g)
+
+    print("Pre-computing text anchors...")
+    model.eval()
+    train_texts = tr_set.texts
+    train_text_tokens = tokenizer(train_texts).to(CFG.DEVICE)
+
+    val_texts = val_set.texts
+    val_text_tokens = tokenizer(val_texts).to(CFG.DEVICE)
+    
+    with torch.no_grad():
+        train_text_anchors = model.encode_text(train_text_tokens)
+        train_text_anchors = train_text_anchors / train_text_anchors.norm(dim=-1, keepdim=True)
+        val_text_anchors = model.encode_text(val_text_tokens)
+        val_text_anchors = val_text_anchors / val_text_anchors.norm(dim=-1, keepdim=True)
+    
+    print("Anchors computed. Starting Training...")
+    all_text_anchors = torch.cat((train_text_anchors,val_text_anchors),dim=0)
+
+    optimizer = torch.optim.AdamW(model.parameters(), lr=CFG.LR,weight_decay=CFG.WD)
+    scaler = torch.amp.GradScaler('cuda')
+    scheduler = None
+
+    best_model_weights=None
+    best_val_loss = 100
+    optimizer.zero_grad()
+    patience = 0
+    for epoch in range(50):
+        train_loss = train_epoch_clip(model,tr_loader,optimizer,scheduler,CFG.DEVICE,scaler,train_text_anchors)
+        val_loss, acc_1, acc_5 = valid_epoch_clip(model,val_loader,all_text_anchors,CFG.DEVICE,len(tr_loader))
+        print(f"Epoch {epoch+1} | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | Val Acc 1: {acc_1:.2f}% | Val Acc 5: {acc_5:.2f}%")
+
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            print(f"--> New Best Loss! Saving model...")
+            best_model_weights = copy.deepcopy(model.state_dict())
+            patience = 0
+        else:
+            patience += 1
+            if patience >= CFG.CLIP_PATIENCE:
+                print(f'EARLY STOP (no improvement in {CFG.CLIP_PATIENCE} epochs)')
+                break
+
+    if best_model_weights is not None:
+        model.load_state_dict(best_model_weights)
+
+    del optimizer,val_loader,tr_loader
+    return model
+
+def train_base(tr_df, val_df, model_id, model_state_dict=None):
+    tr_set = BiomassDatasetBase(tr_df, get_spatial_transforms(), get_photometric_transforms(), CFG.TRAIN_IMAGE_DIR)
+    val_set= BiomassDatasetBase(val_df, None, get_val_transforms(), CFG.TRAIN_IMAGE_DIR)
+
+    g=get_generator()
+    tr_loader  = DataLoader(tr_set,  batch_size=CFG.BATCH_SIZE, shuffle=True,
+                            num_workers=CFG.NUM_WORKERS, pin_memory=True, drop_last=True, worker_init_fn=seed_worker,generator=g)
+    val_loader = DataLoader(val_set, batch_size=CFG.BATCH_SIZE, shuffle=False,
+                            num_workers=CFG.NUM_WORKERS, pin_memory=True, worker_init_fn=seed_worker,generator=g)
+
+    print("Building model...")
+    model = BiomassModelMLP(
+            CFG.MODEL_NAME, 
+            freeze_backbone=CFG.FREEZE_BACKBONE,
+            model_state_dict=model_state_dict
+        )
+    model = model.to(CFG.DEVICE)
+    # model = nn.DataParallel(model)
+
+    if CFG.FREEZE_BACKBONE:
+        parameters = filter(lambda p: p.requires_grad, model.parameters())
+    else:
+        parameters = model.parameters()
+
+    optimizer = torch.optim.AdamW(parameters, lr=CFG.LR, weight_decay=CFG.WD)
+
+    warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
+        optimizer,
+        start_factor=1e-2, # Start from a very small LR
+        end_factor=1.0,
+        total_iters=CFG.WARMUP_EPOCHS
+    )
+
+    main_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer,
+        T_max=CFG.EPOCHS - CFG.WARMUP_EPOCHS
+    )
+    scheduler = torch.optim.lr_scheduler.SequentialLR(
+        optimizer,
+        schedulers=[warmup_scheduler, main_scheduler],
+        milestones=[CFG.WARMUP_EPOCHS]
+    )
+
+    best_r2 = -np.inf
+    patience = 0
+    scaler = torch.amp.GradScaler('cuda')
+    for epoch in range(1, CFG.EPOCHS+1):
+        tr_loss = train_epoch_base(model, tr_loader, optimizer, scheduler, CFG.DEVICE, scaler)
+        val_loss, val_r2 = valid_epoch_base(model, val_loader, CFG.DEVICE)
+
+        print(f'Epoch {epoch:02d} | '
+                f'TrainLoss {tr_loss:.5f} | '
+                f'ValLoss {val_loss:.5f} | '
+                f'ValR² {val_r2:.4f} {"(BEST)" if val_r2 > best_r2 else ""}')
+
+        if val_r2 > best_r2:
+            best_r2 = val_r2
+            save_path = os.path.join(CFG.MODEL_DIR, f'best_model_fold{model_id}.pth')
+            torch.save(model.module.state_dict() if hasattr(model, 'module') else model.state_dict(), save_path)
+            print(f'SAVED (R²: {best_r2:.4f})')
+            patience = 0
+        else:
+            patience += 1
+            if patience >= CFG.PATIENCE:
+                print(f'EARLY STOP (no improvement in {CFG.PATIENCE} epochs)')
+                break
+    del optimizer,val_loader,tr_loader,model
+    return best_r2

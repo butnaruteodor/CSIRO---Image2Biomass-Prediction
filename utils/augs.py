@@ -1,4 +1,5 @@
 import albumentations as A
+import torchvision.transforms as T
 from albumentations.pytorch import ToTensorV2
 from configs.cfg import CFG
 
@@ -30,3 +31,11 @@ def get_val_transforms():
                     std =[0.229, 0.224, 0.225]),
         ToTensorV2()
     ], p=1.0)
+
+train_aug = A.Compose([
+        A.HorizontalFlip(p=0.5),
+        A.VerticalFlip(p=0.5),
+        A.RandomRotate90(p=0.5),
+        A.ColorJitter(brightness=0.2,contrast=0.2,saturation=0.2,hue=0.0,p=0.5),
+        # T.GaussianBlur(kernel_size=3, sigma=(0.1, 1.0)),
+    ])

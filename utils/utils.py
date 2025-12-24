@@ -1,4 +1,8 @@
 import torch
+import open_clip
+from peft import PeftModel
+from collections import OrderedDict
+from configs.cfg import CFG
 
 def compare_structure(path_a, path_b):
     print(f"--- Structure Comparison ---")
@@ -56,3 +60,39 @@ def compare_structure(path_a, path_b):
 # FILE_B = "adapters/second/lora_finetuned_convnext_base_second.pt" 
 
 # compare_structure(FILE_A, FILE_B)
+
+def get_clean_timm_state_dict(model):
+    """
+    Takes a trained OpenCLIP + LoRA model, merges weights, 
+    cleans keys, and returns a timm-compatible state_dict.
+    Does NOT save to disk.
+    """
+    # print("Merging LoRA weights in memory...")
+    
+    # 1. Merge LoRA weights back into the base visual model
+    merged_visual_model = model.visual.merge_and_unload()
+    
+    # 2. Get the raw state dict
+    raw_state_dict = merged_visual_model.state_dict()
+    
+    # print("Cleaning state dict keys...")
+    clean_state_dict = OrderedDict()
+
+    for key, value in raw_state_dict.items():
+        # 1. Standardize keys (OpenCLIP -> timm)
+        new_key = key.replace("trunk.", "")
+        new_key = new_key.replace("visual.", "")
+        new_key = new_key.replace("module.", "")
+        
+        # 2. Remove CLIP-specific Projection Layer
+        # This is the "Structure Mismatch" fix
+        if "head.proj" in new_key:
+            continue  
+            
+        # 3. Handle Output Head (Optional but recommended)
+        
+        # 4. Move to CPU to save VRAM and decouple from GPU
+        clean_state_dict[new_key] = value.cpu()
+
+    # print(f"Conversion complete! {len(clean_state_dict)} keys ready for timm.")
+    return clean_state_dict

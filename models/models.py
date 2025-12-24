@@ -1,9 +1,11 @@
 import torch, torch.nn as nn
 import timm,os
 from configs.cfg import CFG
+import open_clip
+from peft import LoraConfig, get_peft_model
 
 class BiomassModelMLP(nn.Module):
-    def __init__(self, model_name, freeze_backbone=False, checkpoint_path=None):
+    def __init__(self, model_name, freeze_backbone=False, checkpoint_path=None, model_state_dict=None):
         super().__init__()
         
         # 1. Image Backbone
@@ -17,6 +19,9 @@ class BiomassModelMLP(nn.Module):
             weights = torch.load(checkpoint_path, map_location='cpu')
             # strict=False allows ignoring the 'head' layers if dimensions differ
             self.backbone.load_state_dict(weights, strict=True)
+        if model_state_dict:
+            print("Loading pretrained clip model")
+            self.backbone.load_state_dict(model_state_dict, strict=True)
 
         # self.backbone.avg_pool=GeM()
         nf = self.backbone.num_features
@@ -46,6 +51,11 @@ class BiomassModelMLP(nn.Module):
             print("Pretrained weights loaded (CPU)")
         except Exception as e:
             print(f"Warning: Pretrained load failed: {e}")
+    def load_pretrained(self, state_dict):
+        try:
+            self.backbone.load_state_dict(state_dict, strict=True)
+        except Exception as e:
+            print(f"Warning: Pretrained load failed: {e}")
 
     def freeze_backbone(self):
         print("Freezing backbone parameters.")
@@ -70,3 +80,35 @@ class BiomassModelMLP(nn.Module):
         p_total, p_gdm, p_green = predictions.split(1, dim=1)
         
         return (p_total, p_gdm, p_green)
+    
+
+def get_lora_model():
+    print(f"Loading OpenCLIP model: {CFG.CLIP_NAME}...")
+    
+    # 1. Load Model via OpenCLIP
+    model, _, preprocess = open_clip.create_model_and_transforms(
+        CFG.CLIP_NAME, 
+        pretrained=CFG.CLIP_FT_NAME,
+        device=CFG.DEVICE
+    )
+    tokenizer = open_clip.get_tokenizer(CFG.CLIP_NAME)
+
+    # 3. Freeze Everything
+    for param in model.parameters():
+        param.requires_grad = False
+        
+    # 4. Apply LoRA to Visual Encoder ONLY
+    # ConvNeXt uses 'fc1', 'fc2' in its MLP blocks
+    config = LoraConfig(
+        r=4, 
+        lora_alpha=16,
+        target_modules=["fc1", "fc2"], 
+        lora_dropout=0.1,
+        bias="none"
+    )
+    
+    # Wrap the visual tower specifically
+    model.visual = get_peft_model(model.visual, config)
+    
+    model.visual.print_trainable_parameters()
+    return model, preprocess, tokenizer
