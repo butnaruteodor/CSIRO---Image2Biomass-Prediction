@@ -3,3 +3,6 @@ out/
 convnext-exp1/
 wandb/
 csiro-biomass/train/*
+*.pt
+*.pth
+__pycache__/
