@@ -3,6 +3,7 @@ from configs.cfg import CFG
 import os, cv2, numpy as np
 import torch
 from PIL import Image
+import random
 
 class BiomassDatasetBase(Dataset):
     def __init__(self, df, transform, photometric_transform, img_dir):
@@ -38,46 +39,52 @@ class BiomassDatasetBase(Dataset):
         label = torch.from_numpy(self.labels[idx])
         return left, right, label
     
-def slice_image(image, tile_size=256):
+def fast_slice_resize_image(image, tile_size, target_size, mean, std):
     """
-    Slices a numpy image into tiles. Pads the last tiles with black if they are too small.
-    Args:
-        image: Numpy array (H, W, 3)
-        tile_size: Int, size of the tiles
+    1. Vectorized Slice (Numpy)
+    2. Batch Resize (OpenCV is fast)
+    3. Normalize (Torch)
     """
-    h, w = image.shape[:2]
-    tiles = []
+    h, w, c = image.shape
     
-    # Loop through height and width
-    for i in range(0, h, tile_size):
-        for j in range(0, w, tile_size):
-            
-            # 1. Basic slicing (Numpy handles boundary checking by truncating)
-            tile = image[i : i + tile_size, j : j + tile_size]
-            
-            # 2. Check size and Pad if necessary
-            # (If we are at the edge, the tile might be smaller than tile_size)
-            cur_h, cur_w = tile.shape[:2]
-            
-            if cur_h != tile_size or cur_w != tile_size:
-                # Calculate how much to pad on bottom and right
-                pad_bottom = tile_size - cur_h
-                pad_right = tile_size - cur_w
-                
-                # copyMakeBorder is the OpenCV equivalent of creating a new canvas and pasting
-                tile = cv2.copyMakeBorder(
-                    tile, 
-                    top=0, 
-                    bottom=pad_bottom, 
-                    left=0, 
-                    right=pad_right, 
-                    borderType=cv2.BORDER_CONSTANT, 
-                    value=(0, 0, 0) # Black padding
-                )
-            
-            tiles.append(tile)
-            
-    return tiles
+    # --- A. Pad (Vectorized) ---
+    pad_h = (tile_size - h % tile_size) % tile_size
+    pad_w = (tile_size - w % tile_size) % tile_size
+    
+    if pad_h > 0 or pad_w > 0:
+        image = np.pad(image, ((0, pad_h), (0, pad_w), (0, 0)), mode='constant', constant_values=0)
+        
+    # --- B. Slice (Vectorized Reshape) ---
+    n_rows = image.shape[0] // tile_size
+    n_cols = image.shape[1] // tile_size
+    
+    # Reshape to (Num_Tiles, tile_size, tile_size, 3)
+    tiles = image.reshape(n_rows, tile_size, n_cols, tile_size, c)
+    tiles = tiles.transpose(0, 2, 1, 3, 4).reshape(-1, tile_size, tile_size, c)
+    
+    # --- C. Batch Resize (The crucial memory fix) ---
+    # We resize BEFORE converting to float to save memory, 
+    # and we resize before stacking to keep the tensor small.
+    
+    resized_tiles = []
+    # Loop is unavoidable for resize, but OpenCV is extremely fast (C++ backend)
+    for i in range(tiles.shape[0]):
+        # Resize 512x512 -> 256x256
+        resized = cv2.resize(tiles[i], (target_size, target_size), interpolation=cv2.INTER_AREA)
+        resized_tiles.append(resized)
+    
+    # Stack into one numpy array: (Num_Tiles, 256, 256, 3)
+    batch_np = np.stack(resized_tiles)
+
+    # --- D. Normalize (Vectorized Torch) ---
+    # Convert to Tensor: (Num_Tiles, 3, 256, 256)
+    batch_tensor = torch.from_numpy(batch_np).permute(0, 3, 1, 2)
+    
+    # Float conversion + CLIP Normalization
+    batch_tensor = batch_tensor.float().div(255.0)
+    batch_tensor = (batch_tensor - mean) / std
+    
+    return batch_tensor
 
 class BiomassDatasetClip(Dataset):
     def __init__(self, df, transform, photometric_transform, img_dir, preprocess, tokenizer, tile_size=512):
@@ -89,69 +96,86 @@ class BiomassDatasetClip(Dataset):
         self.paths     = df['image_path'].values
         self.tile_size = tile_size
         self.labels    = df[CFG.ALL_TARGET_COLS].values.astype(np.float32)
-
+        self.model_input_size = 256
+        self.mean = torch.tensor([0.48145466, 0.4578275, 0.40821073]).view(1, 3, 1, 1)
+        self.std  = torch.tensor([0.26862954, 0.26130258, 0.27577711]).view(1, 3, 1, 1)
+        
         self.texts = [self._generate_text_description(row) for _, row in df.iterrows()]
 
-    def _generate_text_description(self, row):
+    def _generate_text_description(self, row, p=0.2, training=True):
         """
         Converts a dataframe row into a descriptive sentence.
-        Adjust the template below to emphasize the features you care about most.
+        
+        Args:
+            p (float): Probability of DROPPING a specific measurement (0.0 to 1.0).
+            training (bool): If False, all data is included (validation mode).
         """
-        # Option A: Natural Language (Best for CLIP semantics)
-        # We focus on the most visually distinct features: Species, State, and key measurements.
-        # template = (
-        #     f"A photo of {row['Species']} vegetation located in {row['State']}. "
-        #     f"Measurements: Height {row['Height_Ave_cm']:.1f}cm, "
-        #     f"Green Mass {row['Dry_Green_g']:.1f}g, "
-        #     f"Dead Mass {row['Dry_Dead_g']:.1f}g, "
-        #     f"Clover {row['Dry_Clover_g']:.1f}g, "
-        #     f"NDVI {row['Pre_GSHH_NDVI']:.2f}."
-        # )
+        # 1. The Core Sentence (The "Anchor")
+        # We rarely drop the Species, but we can optionally drop the State location
+        intro = f"A photo of {row['Species']} vegetation"
         
-        # Option B: Key-Value style (Sometimes works better for pure regression tasks)
-        template = (
-            f"Species: {row['Species']}, State: {row['State']}, "
-            f"Height: {row['Height_Ave_cm']}, Green: {row['Dry_Green_g']}, "
-            f"Dead: {row['Dry_Dead_g']}, Clover: {row['Dry_Clover_g']}, NDVI: {row['Pre_GSHH_NDVI']}"
-        )
-        
-        return template
+        if not training or random.random() > p:
+            intro += f" located in {row['State']}"
+        intro += "."
+
+        # 2. The Measurements List
+        # We define them as a list of independent strings
+        measurements = [
+            f"Height {row['Height_Ave_cm']:.1f}cm",
+            f"Green Mass {row['Dry_Green_g']:.1f}g",
+            f"Dead Mass {row['Dry_Dead_g']:.1f}g",
+            f"Clover {row['Dry_Clover_g']:.1f}g",
+            f"NDVI {row['Pre_GSHH_NDVI']:.2f}",
+            f"Total Dry Mass {row['Dry_Total_g']:.1f}g",
+            f"GDM {row['GDM_g']:.1f}g"
+        ]
+
+        # 3. Apply Augmentation (Dropout & Shuffle)
+        if training:
+            # A. Filter: Keep items where random value > p
+            kept_measurements = [m for m in measurements if random.random() > p]
+            
+            # B. Shuffle: Randomize the order so position doesn't matter
+            random.shuffle(kept_measurements)
+        else:
+            # Validation: Keep all, maintain fixed order
+            kept_measurements = measurements
+
+        # 4. Final Assembly
+        # Only add the "Measurements:" prefix if we actually have data left
+        if kept_measurements:
+            measurements_str = ", ".join(kept_measurements)
+            full_text = f"{intro} Measurements: {measurements_str}."
+        else:
+            full_text = intro
+
+        return full_text
 
     def __len__(self):
         return len(self.df)
 
     def __getitem__(self, idx):
-        # 1. Image Loading (Native OpenCV)
+        # 1. Load Image
         path = os.path.join(self.img_dir, os.path.basename(self.paths[idx]))
-        
         img = cv2.imread(path)
         if img is None:
-            # Create a black placeholder numpy array
             img = np.zeros((1000, 2000, 3), dtype=np.uint8)
         else:
-            # OpenCV loads as BGR, convert to RGB for consistency
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-        # 2. Albumentations Transform
-        # Pass the numpy array directly. Albumentations returns a dict.
+        # 2. Albumentations
         if self.transform:
-            # Ensure your transform is an Albumentations Compose pipeline
-            transformed = self.transform(image=img)
-            img = transformed['image']
+            img = self.transform(image=img)['image']
 
-        # 3. Tiling (Using the new Numpy function)
-        tiles = slice_image(img, tile_size=self.tile_size)
-        
-        # 4. Preprocess (Bridge to OpenCLIP)
-        # The OpenCLIP 'preprocess' function expects a PIL Image. 
-        # We convert tiles briefly to PIL here just for that compatibility.
-        # Result: [Num_Tiles, 3, 256, 256]
-        tile_tensors = [self.preprocess(Image.fromarray(tile)) for tile in tiles]
-        
-        pixel_values = torch.stack(tile_tensors)
-        
+        pixel_values = fast_slice_resize_image(
+            img, 
+            tile_size=self.tile_size, 
+            target_size=self.model_input_size,
+            mean=self.mean,
+            std=self.std
+        )
         return {
-            "pixel_values": pixel_values,
+            "pixel_values": pixel_values, # Shape: [Num_Tiles, 3, 512, 512]
             "text": self.texts[idx],
             "index": idx
         }

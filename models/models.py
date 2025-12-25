@@ -112,3 +112,90 @@ def get_lora_model():
     
     model.visual.print_trainable_parameters()
     return model, preprocess, tokenizer
+    
+class BiomassCLIP(nn.Module):
+    def __init__(self, clip_model, embed_dim):
+        super().__init__()
+        self.clip = clip_model
+        
+        # The Learnable Attention Layer
+        # It takes a feature vector and outputs a single "importance score"
+        self.attention_pool = nn.Sequential(
+            nn.Linear(embed_dim, 256),
+            nn.Tanh(),
+            nn.Linear(256, 1)
+        )
+
+    def encode_image(self, tiles):
+        """
+        Input: [Num_Tiles, 3, H, W]
+        Output: [1, Embed_Dim] (One vector for the whole bag of tiles)
+        """
+        # 1. Get features for all tiles using the LoRA-CLIP visual tower
+        # Shape: [Num_Tiles, Embed_Dim]
+        tile_features = self.clip.encode_image(tiles)
+        
+        # 2. Calculate Attention Scores
+        # Shape: [Num_Tiles, 1]
+        scores = self.attention_pool(tile_features)
+        
+        # 3. Softmax over the "Bag" dimension so weights sum to 1
+        weights = torch.softmax(scores, dim=0)
+        
+        # 4. Weighted Sum: Sum(Weight * Feature)
+        # Shape: [1, Embed_Dim]
+        weighted_avg = torch.sum(weights * tile_features, dim=0, keepdim=True)
+        
+        return weighted_avg
+    
+    # Helper to expose internal CLIP methods/attributes
+    @property
+    def logit_scale(self):
+        return self.clip.logit_scale
+    
+    def encode_text(self, text):
+        return self.clip.encode_text(text)
+    
+def get_lora_model_with_attention():
+    print(f"Loading OpenCLIP model: {CFG.CLIP_NAME}...")
+    
+    # 1. Load Base Model
+    base_model, _, preprocess = open_clip.create_model_and_transforms(
+        CFG.CLIP_NAME, 
+        pretrained=CFG.CLIP_FT_NAME,
+        device=CFG.DEVICE
+    )
+    tokenizer = open_clip.get_tokenizer(CFG.CLIP_NAME)
+
+    # 2. Freeze Base Model Completely
+    for param in base_model.parameters():
+        param.requires_grad = False
+        
+    # 3. Apply LoRA to Visual Encoder
+    config = LoraConfig(
+        r=4, 
+        lora_alpha=16,
+        target_modules=["fc1", "fc2"], 
+        lora_dropout=0.1,
+        bias="none"
+    )
+    base_model.visual = get_peft_model(base_model.visual, config)
+    
+    # 4. Wrap with Attention Mechanism
+    # We fetch the output dim dynamically so it works with any CLIP model
+    if hasattr(base_model, 'embed_dim'):
+        embed_dim = base_model.embed_dim
+    else:
+        # Fallback: Run a dummy text to check output size
+        # (Safer than running an image which might need resizing)
+        print("Inferring embed_dim via dummy forward pass...")
+        dummy_text = tokenizer(["test"]).to(CFG.DEVICE)
+        with torch.no_grad():
+            embed_dim = base_model.encode_text(dummy_text).shape[-1]
+    final_model = BiomassCLIP(base_model, embed_dim).to(CFG.DEVICE)
+    
+    # Print trainable params to verify (LoRA + Attention should be True)
+    trainable_params = sum(p.numel() for p in final_model.parameters() if p.requires_grad)
+    print(f"Model Ready. Total Trainable Parameters (LoRA + Attention): {trainable_params:,}")
+    
+    return final_model, preprocess, tokenizer

@@ -14,7 +14,9 @@ class CFG:
     # CLIP
     CLIP_NAME    = 'convnext_base_w'
     CLIP_FT_NAME = "laion2b_s13b_b82k_augreg"
-    CLIP_PATIENCE = 5
+    CLIP_PATIENCE = 10
+    CLIP_EPOCHS = 50
+    CLIP_WD = 0.001
 
     CHECKPOINT_PATH = None #'adapters/r8/lora_finetuned_convnext_base_r8.pt'
     FREEZE_BACKBONE = True
@@ -23,7 +25,7 @@ class CFG:
     ALPHA_CLIP   = 0.1
     BATCH_SIZE   = 1
     GRAD_ACC     = 8    # effective batch = 8
-    NUM_WORKERS  = 1
+    NUM_WORKERS  = 4
     EPOCHS       = 20
     LR           = 1e-3
     WD           = 0.01 #1e-2 convnext

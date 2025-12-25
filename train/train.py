@@ -223,7 +223,7 @@ def train_clip(tr_df, val_df):
     print("Anchors computed. Starting Training...")
     all_text_anchors = torch.cat((train_text_anchors,val_text_anchors),dim=0)
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=CFG.LR,weight_decay=CFG.WD)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=CFG.LR,weight_decay=CFG.CLIP_WD)
     scaler = torch.amp.GradScaler('cuda')
     scheduler = None
 
@@ -231,9 +231,9 @@ def train_clip(tr_df, val_df):
     best_val_loss = 100
     optimizer.zero_grad()
     patience = 0
-    for epoch in range(50):
+    for epoch in range(CFG.CLIP_EPOCHS):
         train_loss = train_epoch_clip(model,tr_loader,optimizer,scheduler,CFG.DEVICE,scaler,train_text_anchors)
-        val_loss, acc_1, acc_5 = valid_epoch_clip(model,val_loader,all_text_anchors,CFG.DEVICE,len(tr_loader))
+        val_loss, acc_1, acc_5 = valid_epoch_clip(model,val_loader,val_text_anchors,CFG.DEVICE,0)
         print(f"Epoch {epoch+1} | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | Val Acc 1: {acc_1:.2f}% | Val Acc 5: {acc_5:.2f}%")
 
         if val_loss < best_val_loss:
