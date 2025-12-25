@@ -39,18 +39,44 @@ class BiomassDatasetBase(Dataset):
         return left, right, label
     
 def slice_image(image, tile_size=256):
-    w, h = image.size
+    """
+    Slices a numpy image into tiles. Pads the last tiles with black if they are too small.
+    Args:
+        image: Numpy array (H, W, 3)
+        tile_size: Int, size of the tiles
+    """
+    h, w = image.shape[:2]
     tiles = []
+    
+    # Loop through height and width
     for i in range(0, h, tile_size):
         for j in range(0, w, tile_size):
-            box = (j, i, min(j + tile_size, w), min(i + tile_size, h))
-            tile = image.crop(box)
-            if tile.size != (tile_size, tile_size):
-                new_tile = Image.new("RGB", (tile_size, tile_size), (0, 0, 0))
-           
-                new_tile.paste(tile, (0, 0))
-                tile = new_tile
+            
+            # 1. Basic slicing (Numpy handles boundary checking by truncating)
+            tile = image[i : i + tile_size, j : j + tile_size]
+            
+            # 2. Check size and Pad if necessary
+            # (If we are at the edge, the tile might be smaller than tile_size)
+            cur_h, cur_w = tile.shape[:2]
+            
+            if cur_h != tile_size or cur_w != tile_size:
+                # Calculate how much to pad on bottom and right
+                pad_bottom = tile_size - cur_h
+                pad_right = tile_size - cur_w
+                
+                # copyMakeBorder is the OpenCV equivalent of creating a new canvas and pasting
+                tile = cv2.copyMakeBorder(
+                    tile, 
+                    top=0, 
+                    bottom=pad_bottom, 
+                    left=0, 
+                    right=pad_right, 
+                    borderType=cv2.BORDER_CONSTANT, 
+                    value=(0, 0, 0) # Black padding
+                )
+            
             tiles.append(tile)
+            
     return tiles
 
 class BiomassDatasetClip(Dataset):
@@ -95,33 +121,37 @@ class BiomassDatasetClip(Dataset):
         return len(self.df)
 
     def __getitem__(self, idx):
-        # 1. Image Loading
+        # 1. Image Loading (Native OpenCV)
         path = os.path.join(self.img_dir, os.path.basename(self.paths[idx]))
         
-        # Use OpenCV for speed, but convert to PIL for OpenCLIP compatibility
         img = cv2.imread(path)
         if img is None:
-            # Black placeholder if image missing (prevents crash)
+            # Create a black placeholder numpy array
             img = np.zeros((1000, 2000, 3), dtype=np.uint8)
-        
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        else:
+            # OpenCV loads as BGR, convert to RGB for consistency
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-        pil_img = Image.fromarray(img) # slice_image expects PIL
-        
+        # 2. Albumentations Transform
+        # Pass the numpy array directly. Albumentations returns a dict.
         if self.transform:
-            # pil_img = self.transform(pil_img)
-            pil_img  = self.transform(image=pil_img)['image']
+            # Ensure your transform is an Albumentations Compose pipeline
+            transformed = self.transform(image=img)
+            img = transformed['image']
 
-        # 2. Tiling
-        tiles = slice_image(pil_img, tile_size=self.tile_size)
+        # 3. Tiling (Using the new Numpy function)
+        tiles = slice_image(img, tile_size=self.tile_size)
         
-        # 3. Preprocess (Normalization + Tensor conversion)
+        # 4. Preprocess (Bridge to OpenCLIP)
+        # The OpenCLIP 'preprocess' function expects a PIL Image. 
+        # We convert tiles briefly to PIL here just for that compatibility.
         # Result: [Num_Tiles, 3, 256, 256]
-        tile_tensors = [self.preprocess(tile) for tile in tiles]
+        tile_tensors = [self.preprocess(Image.fromarray(tile)) for tile in tiles]
+        
         pixel_values = torch.stack(tile_tensors)
         
         return {
             "pixel_values": pixel_values,
-            "text": self.texts[idx], # Returns the pre-computed string
+            "text": self.texts[idx],
             "index": idx
         }
