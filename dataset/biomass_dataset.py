@@ -87,9 +87,8 @@ def fast_slice_resize_image(image, tile_size, target_size, mean, std):
     return batch_tensor
 
 class BiomassDatasetClip(Dataset):
-    def __init__(self, df, transform, photometric_transform, img_dir, preprocess, tokenizer, tile_size=512):
+    def __init__(self, df, transform, photometric_transform, img_dir, preprocess, tile_size=512, is_train=True):
         self.preprocess = preprocess
-        self.tokenizer = tokenizer
         self.img_dir   = img_dir
         self.df        = df
         self.transform = transform
@@ -100,7 +99,7 @@ class BiomassDatasetClip(Dataset):
         self.mean = torch.tensor([0.48145466, 0.4578275, 0.40821073]).view(1, 3, 1, 1)
         self.std  = torch.tensor([0.26862954, 0.26130258, 0.27577711]).view(1, 3, 1, 1)
         
-        self.texts = [self._generate_text_description(row) for _, row in df.iterrows()]
+        self.texts = [self._generate_text_description(row,training=is_train) for _, row in df.iterrows()]
 
     def _generate_text_description(self, row, p=0.2, training=True):
         """
@@ -113,11 +112,6 @@ class BiomassDatasetClip(Dataset):
         # 1. The Core Sentence (The "Anchor")
         # We rarely drop the Species, but we can optionally drop the State location
         intro = f"A photo of {row['Species']} vegetation"
-        
-        if not training or random.random() > p:
-            intro += f" located in {row['State']}"
-        intro += "."
-
         # 2. The Measurements List
         # We define them as a list of independent strings
         measurements = [
@@ -136,7 +130,7 @@ class BiomassDatasetClip(Dataset):
             kept_measurements = [m for m in measurements if random.random() > p]
             
             # B. Shuffle: Randomize the order so position doesn't matter
-            random.shuffle(kept_measurements)
+            # random.shuffle(kept_measurements)
         else:
             # Validation: Keep all, maintain fixed order
             kept_measurements = measurements

@@ -192,13 +192,39 @@ def valid_epoch_clip(model, loader, text_anchors, device, val_index_offset=0):
     
     return avg_loss, acc_1, acc_5
 
+def precompute_epoch_anchors(model, dataset, tokenizer, device):
+    """
+    Generates FRESH random text for the entire dataset and encodes it.
+    Returns: Tensor [Dataset_Size, Embed_Dim]
+    """
+    model.eval() # Text encoder is frozen/eval anyway
+    print("Regenerating global text anchors for this epoch...")
+    
+    # 1. Ask Dataset to generate fresh strings (Triggering dropout/shuffle)
+    # We manually iterate because DataLoader would load images too
+    all_texts = []
+    for i in range(len(dataset)):
+        # We access the internal generation method directly
+        row = dataset.df.iloc[i]
+        # Force training=True to get the augmentations
+        txt = dataset._generate_text_description(row, training=True) 
+        all_texts.append(txt)
+    
+    # 2. Tokenize & Encode
+    # Since N=357 is small, we can do this in one pass without OOM.
+    with torch.no_grad():
+        tokens = tokenizer(all_texts).to(device)
+        anchors = model.encode_text(tokens)
+        anchors = anchors / anchors.norm(dim=-1, keepdim=True)
+        
+    return anchors
 
 def train_clip(tr_df, val_df):
     model, preprocess, tokenizer = get_lora_model()
     model = model.to(CFG.DEVICE)
 
-    tr_set = BiomassDatasetClip(tr_df, train_aug, None, CFG.TRAIN_IMAGE_DIR, preprocess, tokenizer)
-    val_set = BiomassDatasetClip(val_df, None, None, CFG.TRAIN_IMAGE_DIR, preprocess, tokenizer)
+    tr_set = BiomassDatasetClip(tr_df, train_aug, None, CFG.TRAIN_IMAGE_DIR, preprocess)
+    val_set = BiomassDatasetClip(val_df, None, None, CFG.TRAIN_IMAGE_DIR, preprocess,is_train=False)
 
     g=get_generator()
     tr_loader  = DataLoader(tr_set,  batch_size=CFG.BATCH_SIZE, shuffle=True,
@@ -208,20 +234,20 @@ def train_clip(tr_df, val_df):
 
     print("Pre-computing text anchors...")
     model.eval()
-    train_texts = tr_set.texts
-    train_text_tokens = tokenizer(train_texts).to(CFG.DEVICE)
+    # train_texts = tr_set.texts
+    # train_text_tokens = tokenizer(train_texts).to(CFG.DEVICE)
 
     val_texts = val_set.texts
     val_text_tokens = tokenizer(val_texts).to(CFG.DEVICE)
     
     with torch.no_grad():
-        train_text_anchors = model.encode_text(train_text_tokens)
-        train_text_anchors = train_text_anchors / train_text_anchors.norm(dim=-1, keepdim=True)
+        # train_text_anchors = model.encode_text(train_text_tokens)
+        # train_text_anchors = train_text_anchors / train_text_anchors.norm(dim=-1, keepdim=True)
         val_text_anchors = model.encode_text(val_text_tokens)
         val_text_anchors = val_text_anchors / val_text_anchors.norm(dim=-1, keepdim=True)
     
     print("Anchors computed. Starting Training...")
-    all_text_anchors = torch.cat((train_text_anchors,val_text_anchors),dim=0)
+    # all_text_anchors = torch.cat((train_text_anchors,val_text_anchors),dim=0)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=CFG.LR,weight_decay=CFG.CLIP_WD)
     scaler = torch.amp.GradScaler('cuda')
@@ -232,7 +258,8 @@ def train_clip(tr_df, val_df):
     optimizer.zero_grad()
     patience = 0
     for epoch in range(CFG.CLIP_EPOCHS):
-        train_loss = train_epoch_clip(model,tr_loader,optimizer,scheduler,CFG.DEVICE,scaler,train_text_anchors)
+        train_anchors = precompute_epoch_anchors(model, tr_set, tokenizer, CFG.DEVICE)
+        train_loss = train_epoch_clip(model,tr_loader,optimizer,scheduler,CFG.DEVICE,scaler,train_anchors)
         val_loss, acc_1, acc_5 = valid_epoch_clip(model,val_loader,val_text_anchors,CFG.DEVICE,0)
         print(f"Epoch {epoch+1} | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | Val Acc 1: {acc_1:.2f}% | Val Acc 5: {acc_5:.2f}%")
 

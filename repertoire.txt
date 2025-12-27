@@ -1,0 +1,21 @@
+vit_large_patch16_dinov3_qkvb 768 img
+
+Local CV Score: 0.782 ± 0.071
+
+Individual Fold Scores:
+  Fold 1: 0.8343
+  Fold 2: 0.7802
+  Fold 3: 0.6462
+  Fold 4: 0.8462
+  Fold 5: 0.8031
+
+vit_small_patch16_dinov3 512 img
+
+Local CV Score: 0.731 ± 0.059
+
+Individual Fold Scores:
+  Fold 1: 0.7677
+  Fold 2: 0.7319
+  Fold 3: 0.6167
+  Fold 4: 0.7707
+  Fold 5: 0.7675

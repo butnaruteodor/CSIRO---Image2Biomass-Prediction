@@ -10,9 +10,10 @@ class BiomassModelMLP(nn.Module):
         
         # 1. Image Backbone
         self.backbone = timm.create_model(
-            model_name, pretrained=False, num_classes=0, global_pool='avg')
+            model_name, pretrained=False, num_classes=0)
         
-        # self.load_pretrained()
+        print(f"{CFG.MODEL_NAME} parameters: {sum(p.numel() for p in self.backbone.parameters() if p.requires_grad)}")
+        self.load_pretrained()
 
         if checkpoint_path:
             # SIMPLE LOADING
@@ -51,11 +52,11 @@ class BiomassModelMLP(nn.Module):
             print("Pretrained weights loaded (CPU)")
         except Exception as e:
             print(f"Warning: Pretrained load failed: {e}")
-    def load_pretrained(self, state_dict):
-        try:
-            self.backbone.load_state_dict(state_dict, strict=True)
-        except Exception as e:
-            print(f"Warning: Pretrained load failed: {e}")
+    # def load_pretrained(self, state_dict):
+    #     try:
+    #         self.backbone.load_state_dict(state_dict, strict=True)
+    #     except Exception as e:
+    #         print(f"Warning: Pretrained load failed: {e}")
 
     def freeze_backbone(self):
         print("Freezing backbone parameters.")
