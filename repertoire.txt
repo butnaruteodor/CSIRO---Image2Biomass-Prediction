@@ -19,3 +19,24 @@ Individual Fold Scores:
   Fold 3: 0.6167
   Fold 4: 0.7707
   Fold 5: 0.7675
+
+  "Local CV Score: 0.7663 ± 0.0358\n",
+  "\n",
+  "Individual Fold Scores:\n",
+  "  Fold 1 (n=76): 0.8347\n",
+  "  Fold 2 (n=74): 0.7567\n",
+  "  Fold 3 (n=90): 0.7401\n",
+  "  Fold 4 (n=57): 0.7366\n",
+  "  Fold 5 (n=60): 0.7592\n"
+
+
+  ✅ Best Seed Found: 3858
+📉 Penalty Score: 0.2852 (Lower is better)
+1     | 281          | 76         | 21.29 % | Dry_Total_g:46.9362  | Dry_Green_g:31.0607  | Dry_Dead_g:10.9153  | Dry_Clover_g:4.9602   | GDM_g:36.0209   | Weighted_g:35.3659 
+2     | 283          | 74         | 20.73 % | Dry_Total_g:44.3578  | Dry_Green_g:26.2742  | Dry_Dead_g:11.6826  | Dry_Clover_g:6.4052   | GDM_g:32.6794   | Weighted_g:33.1510 
+3     | 267          | 90         | 25.21 % | Dry_Total_g:46.6830  | Dry_Green_g:26.6510  | Dry_Dead_g:11.8940  | Dry_Clover_g:8.1380   | GDM_g:34.7890   | Weighted_g:34.9676 
+4     | 300          | 57         | 15.97 % | Dry_Total_g:45.3315  | Dry_Green_g:24.7059  | Dry_Dead_g:13.0437  | Dry_Clover_g:7.5819   | GDM_g:32.2878   | Weighted_g:33.6564 
+5     | 297          | 60         | 16.81 % | Dry_Total_g:42.3927  | Dry_Green_g:23.2214  | Dry_Dead_g:13.1980  | Dry_Clover_g:5.9733   | GDM_g:29.1947   | Weighted_g:31.2746 
+-----------------------------------------------------------------
+Max deviation from ideal size: 26.05%
+

@@ -3,12 +3,15 @@ import torch
 from tqdm import tqdm
 from torch.utils.data import Dataset, DataLoader
 import copy
+from datetime import datetime
 
 from utils.eval import *
 from dataset.biomass_dataset import *
 from utils.augs import *
 from configs.deterministic import *
 from models.models import *
+from log.logging import *
+from configs.cfg import *
 
 def train_epoch_clip(model, loader, opt, scheduler, device, scaler, text_anchors):
     model.train()
@@ -280,7 +283,7 @@ def train_clip(tr_df, val_df):
     del optimizer,val_loader,tr_loader
     return model
 
-def train_base(tr_df, val_df, model_id, model_state_dict=None):
+def train_base(tr_df, val_df, model_id, model_state_dict=None, group_name=None):
     tr_set = BiomassDatasetBase(tr_df, get_spatial_transforms(), get_photometric_transforms(), CFG.TRAIN_IMAGE_DIR)
     val_set= BiomassDatasetBase(val_df, None, get_val_transforms(), CFG.TRAIN_IMAGE_DIR)
 
@@ -323,6 +326,8 @@ def train_base(tr_df, val_df, model_id, model_state_dict=None):
         milestones=[CFG.WARMUP_EPOCHS]
     )
 
+    init_logger(model_id, group_name)
+
     best_r2 = -np.inf
     patience = 0
     scaler = torch.amp.GradScaler('cuda')
@@ -330,10 +335,13 @@ def train_base(tr_df, val_df, model_id, model_state_dict=None):
         tr_loss = train_epoch_base(model, tr_loader, optimizer, scheduler, CFG.DEVICE, scaler)
         val_loss, val_r2 = valid_epoch_base(model, val_loader, CFG.DEVICE)
 
-        print(f'Epoch {epoch:02d} | '
+        if val_r2>best_r2:
+            print(f'Epoch {epoch:02d} | '
                 f'TrainLoss {tr_loss:.5f} | '
                 f'ValLoss {val_loss:.5f} | '
                 f'ValR² {val_r2:.4f} {"(BEST)" if val_r2 > best_r2 else ""}')
+        
+        log_data = {"train_loss": tr_loss, "val_loss": val_loss, "val_r2": val_r2, "best_r2":best_r2,}
 
         if val_r2 > best_r2:
             best_r2 = val_r2
@@ -345,6 +353,13 @@ def train_base(tr_df, val_df, model_id, model_state_dict=None):
             patience += 1
             if patience >= CFG.PATIENCE:
                 print(f'EARLY STOP (no improvement in {CFG.PATIENCE} epochs)')
+                for e in range(epoch + 1, CFG.EPOCHS + 1):
+                    log(log_data, e)
                 break
+
+        log_data = {"train_loss": tr_loss, "val_loss": val_loss, "val_r2": val_r2, "best_r2":best_r2,}
+        log(log_data, epoch)
+
+    finish_logger()
     del optimizer,val_loader,tr_loader,model
     return best_r2

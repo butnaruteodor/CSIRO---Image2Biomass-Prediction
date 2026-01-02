@@ -6,10 +6,11 @@ class CFG:
     TRAIN_IMAGE_DIR = os.path.join(BASE_PATH, 'train')
     MODEL_DIR       = 'out'
     N_FOLDS         = 5
+    LOG             = True
 
     # TIMM
     MODEL_NAME = 'vit_small_patch16_dinov3'
-    PATIENCE     = 10
+    PATIENCE     = 15
     
     # CLIP
     CLIP_NAME    = 'convnext_base_w'
@@ -29,12 +30,11 @@ class CFG:
     EPOCHS       = 100
     LR           = 1e-3
     WD           = 0.01 #1e-2 convnext
-    PATIENCE     = 10
     WARMUP_EPOCHS = 4
     WARMUP_HEAD_EPOCHS = 5
 
     DETERMINISTIC = True
-    SEED = 694
+    SEED = 3858
 
     TARGET_COLS    = ['Dry_Total_g', 'GDM_g', 'Dry_Green_g']
     DERIVED_COLS   = ['Dry_Clover_g', 'Dry_Dead_g']

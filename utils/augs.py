@@ -19,6 +19,20 @@ def get_photometric_transforms():
     # These will be applied INDEPENDENTLY to each half
     return A.Compose([
         A.ColorJitter(brightness=0.5,contrast=0.5,saturation=0.5,hue=0.0,p=0.5),
+        # A.RandomShadow(
+        #     shadow_roi=[0, 0, 1, 1],
+        #     num_shadows_limit=[2, 3],
+        #     shadow_dimension=5,
+        #     shadow_intensity_range=[0.2, 0.5]
+        # ),
+        # A.RandomSunFlare(
+        #     flare_roi=[0.1, 0.1, 0.9, 0.9],
+        #     src_radius=20,
+        #     src_color=[255, 0, 0],
+        #     angle_range=[1, 1],
+        #     num_flare_circles_range=[1, 1],
+        #     method="physics_based"
+        # ),
         A.Normalize(mean=[0.485, 0.456, 0.406],
                     std =[0.229, 0.224, 0.225]),
         ToTensorV2()

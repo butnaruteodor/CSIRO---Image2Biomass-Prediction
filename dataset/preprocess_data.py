@@ -3,6 +3,38 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 
+def check_splits(splitter, df):
+    fold_stats = []
+    for fold, (tr_idx, val_idx) in enumerate(splitter):
+        # Get the actual data for this fold
+        train_fold = df.iloc[tr_idx]
+        val_fold   = df.iloc[val_idx]
+        
+        # Calculate stats
+        n_train = len(train_fold)
+        n_val   = len(val_fold)
+        ratio   = n_val / (n_train + n_val) * 100
+        
+        # Check "Hardness" (Mean target value)
+        # If one fold has a mean of 100 and another 500, your folds are NOT balanced.
+        val_mean_total_dry = val_fold['Dry_Total_g'].mean()
+        val_mean_green_dry = val_fold['Dry_Green_g'].mean()
+        val_mean_dead_dry = val_fold['Dry_Dead_g'].mean()
+        val_mean_clover_dry = val_fold['Dry_Clover_g'].mean()
+        val_mean_gdm = val_fold['GDM_g'].mean()
+
+        val_mean_weighted = CFG.R2_WEIGHTS[4] * val_mean_total_dry + CFG.R2_WEIGHTS[0] * val_mean_green_dry + CFG.R2_WEIGHTS[1] * val_mean_dead_dry + CFG.R2_WEIGHTS[2] * val_mean_clover_dry + CFG.R2_WEIGHTS[3] * val_mean_gdm
+        
+        print(f"{fold+1:<5} | {n_train:<12} | {n_val:<10} | {ratio:<6.2f}% | Dry_Total_g:{val_mean_total_dry:<8.4f} | Dry_Green_g:{val_mean_green_dry:<8.4f} | Dry_Dead_g:{val_mean_dead_dry:<8.4f} | Dry_Clover_g:{val_mean_clover_dry:<8.4f} | GDM_g:{val_mean_gdm:<8.4f}  | Weighted_g:{val_mean_weighted:<8.4f}")
+        
+        fold_stats.append(n_val)
+
+    # 3. Check Deviation
+    mean_size = np.mean(fold_stats)
+    max_dev = np.max(np.abs(fold_stats - mean_size)) / mean_size * 100
+    print("-" * 65)
+    print(f"Max deviation from ideal size: {max_dev:.2f}%")
+
 def get_df():
     print("Loading data...")
     df_long = pd.read_csv(CFG.TRAIN_CSV)
