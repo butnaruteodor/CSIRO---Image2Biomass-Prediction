@@ -3,6 +3,31 @@ import timm,os
 from configs.cfg import CFG
 import open_clip
 from peft import LoraConfig, get_peft_model
+import torch.nn.functional as F
+
+class GatedCrossModulation(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        # Learnable gates: "Which features should I boost?"
+        self.gate_layer = nn.Sequential(
+            nn.Linear(dim, dim),
+            nn.Sigmoid() 
+        )
+
+    def forward(self, f1, f2):
+        # 1. Calculate Gates
+        g1 = self.gate_layer(f1) 
+        g2 = self.gate_layer(f2)
+        
+        # 2. Modulate (Boost)
+        # "If slice 1 has clover, boost the clover channels in slice 2"
+        f2_boosted = f2 * g1 
+        f1_boosted = f1 * g2
+        
+        # 3. Residual Sum
+        # We add the original signals (f1, f2) to the boosted ones so we don't lose info,
+        # then SUM the two streams together (simulating "Total Biomass").
+        return (f1 + f1_boosted) + (f2 + f2_boosted)
 
 class BiomassModelMLP(nn.Module):
     def __init__(self, model_name, freeze_backbone=False, checkpoint_path=None, model_state_dict=None):
@@ -26,9 +51,9 @@ class BiomassModelMLP(nn.Module):
 
         # self.backbone.avg_pool=GeM()
         nf = self.backbone.num_features
-        
+        self.fusion = GatedCrossModulation(nf)
         # We have TWO image feature streams (left + right)
-        image_feature_dim = nf * 2
+        image_feature_dim = nf
 
         # 3. Main Head
         self.head = nn.Sequential(
@@ -72,10 +97,11 @@ class BiomassModelMLP(nn.Module):
         # 1. Extract Raw Image Features
         fl = self.backbone(left)
         fr = self.backbone(right)
-        image_features = torch.cat([fl, fr], dim=1) # [B, 1536] (if ConvNeXt-Tiny)
 
-        safe_features = image_features
-        fused = self.head(safe_features)
+        # image_features = torch.cat([fl + fr, fl * fr], dim=1) # [B, 1536] (if ConvNeXt-Tiny)
+        fused_features = self.fusion(fl, fr)
+
+        fused = self.head(fused_features)
         predictions = self.regressor(fused)
         
         p_total, p_gdm, p_green = predictions.split(1, dim=1)

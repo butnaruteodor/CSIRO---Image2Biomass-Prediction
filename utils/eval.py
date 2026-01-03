@@ -41,7 +41,7 @@ def weighted_r2_score(y_true: np.ndarray, y_pred: np.ndarray):
     weighted_r2 = np.sum(r2_scores * weights) / np.sum(weights)
     return weighted_r2
 
-def weighted_biomass_loss(p_total, p_gdm, p_green, labels, use_huber=False):
+def weighted_biomass_loss(p_clover, p_dead, p_green, labels, use_huber=False):
     """
     Calculates the 5 individual MSE losses and returns their
     weighted sum, perfectly aligning with the R2 metric weights.
@@ -49,16 +49,17 @@ def weighted_biomass_loss(p_total, p_gdm, p_green, labels, use_huber=False):
     loss_fn = nn.HuberLoss(delta=15.0) if use_huber else nn.MSELoss()
     
     # 1. Calculate the 5 individual MSE losses
-    loss_total = loss_fn(p_total.squeeze(), labels[:, 4]) # Corresponds to Dry_Total_g
-    loss_gdm   = loss_fn(p_gdm.squeeze(),   labels[:, 3]) # Corresponds to GDM_g
-    loss_green = loss_fn(p_green.squeeze(), labels[:, 0]) # Corresponds to Dry_Green_g
-
+    loss_clover = loss_fn(p_clover.squeeze(), labels[:, 2])
+    loss_dead   = loss_fn(p_dead.squeeze(),   labels[:, 1])
+    loss_green = loss_fn(p_green.squeeze(), labels[:, 0])
+    # p_clover = p_gdm-p_green => p_gdm = p_clover+p_green
+    # p_dead = p_total-p_gdm=> p_total = p_dead+p_gdm
     # Calculate derived predictions
-    p_clover = torch.clamp(p_gdm - p_green, min=0)
-    p_dead   = torch.clamp(p_total - p_gdm, min=0)
+    p_gdm = torch.clamp(p_clover + p_green, min=0)
+    p_total = torch.clamp(p_dead + p_gdm, min=0)
 
-    loss_clover = loss_fn(p_clover.squeeze(), labels[:, 2]) # Corresponds to Dry_Clover_g
-    loss_dead   = loss_fn(p_dead.squeeze(),   labels[:, 1]) # Corresponds to Dry_Dead_g
+    loss_gdm = loss_fn(p_gdm.squeeze(), labels[:, 3])
+    loss_total   = loss_fn(p_total.squeeze(),   labels[:, 4])
 
     # 2. Get the weights
     weights = CFG.R2_WEIGHTS

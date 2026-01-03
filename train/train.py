@@ -50,8 +50,8 @@ def train_epoch_base(model, loader, opt, scheduler, device, scaler):
     for i, (l, r, lab) in enumerate(tqdm(loader, desc='train', leave=False)):
         l, r, lab = l.to(device, non_blocking=True), r.to(device, non_blocking=True), lab.to(device, non_blocking=True)
         with autocast('cuda',dtype=torch.bfloat16):
-            (p_tot, p_gdm, p_green) = model(l, r)
-            loss_reg = weighted_biomass_loss(p_tot, p_gdm, p_green, lab, use_huber=False)
+            (p_clover, p_dead, p_green) = model(l, r)
+            loss_reg = weighted_biomass_loss(p_clover, p_dead, p_green, lab, use_huber=False)
             total_loss = loss_reg
         
         loss = total_loss / CFG.GRAD_ACC
@@ -110,32 +110,32 @@ def train_epoch_base_w_clip(model, loader, opt, scheduler, device, scaler, text_
 def valid_epoch_base(model, loader, device):
     model.eval()
     running_loss = 0.0
-    preds = {'total':[], 'gdm':[], 'green':[]}
+    preds = {'clover':[], 'dead':[], 'green':[]}
     all_labels = []
 
     for l, r, lab in tqdm(loader, desc='valid', leave=False):
         l, r, lab = l.to(device, non_blocking=True), r.to(device, non_blocking=True), lab.to(device, non_blocking=True)
         with autocast('cuda',dtype=torch.bfloat16):
-            (p_tot, p_gdm, p_green) = model(l, r)
+            (p_clover, p_dead, p_green) = model(l, r)
 
-            loss = weighted_biomass_loss(p_tot, p_gdm, p_green, lab)
+            loss = weighted_biomass_loss(p_clover, p_dead, p_green, lab)
 
         running_loss += loss.item() * l.size(0)
 
-        preds['total'].extend(p_tot.cpu().float().numpy().ravel())
-        preds['gdm'].extend(p_gdm.cpu().float().numpy().ravel())
+        preds['clover'].extend(p_clover.cpu().float().numpy().ravel())
+        preds['dead'].extend(p_dead.cpu().float().numpy().ravel())
         preds['green'].extend(p_green.cpu().float().numpy().ravel())
         all_labels.extend(lab.cpu().float().numpy())
 
     # Convert to numpy
-    pred_total = np.array(preds['total'])
-    pred_gdm   = np.array(preds['gdm'])
+    pred_clover = np.array(preds['clover'])
+    pred_dead   = np.array(preds['dead'])
     pred_green = np.array(preds['green'])
     true_labels = np.stack(all_labels)  # (N, 5)
 
     # Compute derived
-    pred_clover = np.clip(pred_gdm - pred_green, 0, None)
-    pred_dead   = np.clip(pred_total - pred_gdm, 0, None)
+    pred_gdm = np.clip(pred_clover + pred_green, 0, None)
+    pred_total   = np.clip(pred_dead + pred_gdm, 0, None)
 
     # Stack predictions in correct order
     pred_all = np.stack([
@@ -283,16 +283,20 @@ def train_clip(tr_df, val_df):
     del optimizer,val_loader,tr_loader
     return model
 
-def train_base(tr_df, val_df, model_id, model_state_dict=None, group_name=None):
+def train_base(tr_df, val_df, model_id, model_state_dict=None, group_name=None, test_df=None):
     tr_set = BiomassDatasetBase(tr_df, get_spatial_transforms(), get_photometric_transforms(), CFG.TRAIN_IMAGE_DIR)
     val_set= BiomassDatasetBase(val_df, None, get_val_transforms(), CFG.TRAIN_IMAGE_DIR)
+    if test_df is not None:
+        test_set = BiomassDatasetBase(test_df, None, get_val_transforms(), CFG.TRAIN_IMAGE_DIR)
 
     g=get_generator()
     tr_loader  = DataLoader(tr_set,  batch_size=CFG.BATCH_SIZE, shuffle=True,
                             num_workers=CFG.NUM_WORKERS, pin_memory=True, drop_last=True, worker_init_fn=seed_worker,generator=g)
     val_loader = DataLoader(val_set, batch_size=CFG.BATCH_SIZE, shuffle=False,
                             num_workers=CFG.NUM_WORKERS, pin_memory=True, worker_init_fn=seed_worker,generator=g)
-
+    if test_df is not None:
+        test_loader = DataLoader(test_set, batch_size=CFG.BATCH_SIZE, shuffle=False,
+                            num_workers=CFG.NUM_WORKERS, pin_memory=True, worker_init_fn=seed_worker,generator=g)
     print("Building model...")
     model = BiomassModelMLP(
             CFG.MODEL_NAME, 
@@ -334,14 +338,18 @@ def train_base(tr_df, val_df, model_id, model_state_dict=None, group_name=None):
     for epoch in range(1, CFG.EPOCHS+1):
         tr_loss = train_epoch_base(model, tr_loader, optimizer, scheduler, CFG.DEVICE, scaler)
         val_loss, val_r2 = valid_epoch_base(model, val_loader, CFG.DEVICE)
+        test_loss, test_val_r2=0,0
+        if test_df is not None:
+            test_loss, test_val_r2 = valid_epoch_base(model, test_loader, CFG.DEVICE)
 
         if val_r2>best_r2:
             print(f'Epoch {epoch:02d} | '
                 f'TrainLoss {tr_loss:.5f} | '
                 f'ValLoss {val_loss:.5f} | '
                 f'ValR² {val_r2:.4f} {"(BEST)" if val_r2 > best_r2 else ""}')
-        
-        log_data = {"train_loss": tr_loss, "val_loss": val_loss, "val_r2": val_r2, "best_r2":best_r2,}
+        if test_df is not None:
+            print(f'TestLoss {test_loss:.5f} | TestR2: {test_val_r2:.4f}')
+        log_data = {"train_loss": tr_loss, "val_loss": val_loss, "val_r2": val_r2, "best_r2":best_r2, "test_loss": test_loss, "test_val_r2":test_val_r2}
 
         if val_r2 > best_r2:
             best_r2 = val_r2
@@ -357,7 +365,7 @@ def train_base(tr_df, val_df, model_id, model_state_dict=None, group_name=None):
                     log(log_data, e)
                 break
 
-        log_data = {"train_loss": tr_loss, "val_loss": val_loss, "val_r2": val_r2, "best_r2":best_r2,}
+        log_data = {"train_loss": tr_loss, "val_loss": val_loss, "val_r2": val_r2, "best_r2":best_r2, "test_loss": test_loss, "test_val_r2":test_val_r2}
         log(log_data, epoch)
 
     finish_logger()
