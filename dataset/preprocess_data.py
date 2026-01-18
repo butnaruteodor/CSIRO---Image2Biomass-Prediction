@@ -1,3 +1,5 @@
+from sklearn.model_selection import StratifiedGroupKFold
+from tqdm import tqdm
 from configs.cfg import CFG
 import pandas as pd
 import numpy as np
@@ -57,7 +59,112 @@ def get_df():
     df_wide['day_sin'] = np.sin(2 * np.pi * df_wide['day_of_year'] / 365.25)
     df_wide['day_cos'] = np.cos(2 * np.pi * df_wide['day_of_year'] / 365.25)
 
-    df_wide['group'] = df_wide['State'].astype(str) + "_" + df_wide['Sampling_Date'].astype(str)
+    # df_wide['group'] = df_wide['State'].astype(str) + "_" + df_wide['Sampling_Date'].astype(str)
+    df_wide['group'] = df_wide['Sampling_Date'].astype(str)
     df_wide['biomass_bin'] = pd.qcut(df_wide['Dry_Total_g'], q=10, labels=False)
 
     return df_wide
+
+def create_hard_extrapolation_split(df, target_col='Dry_Total_g', percentile=0.80):
+    """
+    Splits the dataframe based on target VALUE, not random chance.
+    
+    Train: The bottom 80% of biomass (Small/Medium plants)
+    Test:  The top 20% of biomass (Large/Peak plants)
+    
+    Purpose: Tests if the model/TTA can predict values HIGHER than it has ever seen.
+    """
+    # 1. Determine the cutoff value
+    cutoff_value = df[target_col].quantile(percentile)
+    
+    # 2. Strict Cut
+    train_df = df[df[target_col] < cutoff_value].reset_index(drop=True)
+    val_df   = df[df[target_col] >= cutoff_value].reset_index(drop=True)
+    
+    print(f"\n--- HARD EXTRAPOLATION SPLIT ---")
+    print(f"Cutoff Value (80th percentile): {cutoff_value:.2f}")
+    print(f"Train Set: {len(train_df)} images (Max Mass: {train_df[target_col].max():.2f})")
+    print(f"Valid Set: {len(val_df)} images (Min Mass: {val_df[target_col].min():.2f})")
+    print(f"The Validation set contains ONLY values unseen in Training.")
+    
+    return train_df, val_df
+
+# Define your weights exactly as you listed them
+WEIGHTS_MAP = {
+    'Dry_Green_g': 0.1,
+    'Dry_Dead_g':  0.1,
+    'Dry_Clover_g': 0.1,
+    'GDM_g':       0.2,
+    'Dry_Total_g': 0.5
+}
+
+def calculate_weighted_score(df):
+    """Helper to create the column just like you did in check_splits"""
+    # Start with 0
+    weighted_col = np.zeros(len(df))
+    for col, w in WEIGHTS_MAP.items():
+        weighted_col += df[col] * w
+    return weighted_col
+
+def find_best_seed(df, n_seeds=2000):
+    """
+    Iterates through random seeds to find the one that minimizes the 
+    statistical difference between folds for critical targets.
+    """
+    
+    # 1. Prepare Data for Search
+    # We calculate the weighted column purely for the balancing metric
+    df_search = df.copy()
+    df_search['Weighted_g'] = calculate_weighted_score(df_search)
+    
+    # We want to balance these specific columns. 
+    # We prioritize 'Dry_Clover_g' because it is sparse/weird (your Fold 4 issue).
+    # We prioritize 'Weighted_g' because it represents the overall difficulty.
+    targets_to_balance = ['Weighted_g', 'Dry_Clover_g', 'Dry_Dead_g']
+    
+    best_seed = -1
+    lowest_penalty = float('inf')
+    
+    print(f"🔍 Searching {n_seeds} seeds for the most balanced split...")
+    
+    for seed in tqdm(range(n_seeds)):
+        # Initialize the splitter with the current seed
+        sgkf = StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=seed)
+        
+        # We collect the means of our targets for each fold
+        fold_means = {t: [] for t in targets_to_balance}
+        
+        try:
+            # Iterate through the folds
+            for _, val_idx in sgkf.split(df_search, df_search['biomass_bin'], groups=df_search['group']):
+                val_fold = df_search.iloc[val_idx]
+                
+                for t in targets_to_balance:
+                    fold_means[t].append(val_fold[t].mean())
+            
+            # --- CALCULATE PENALTY ---
+            # We use Coefficient of Variation (Std Dev / Mean). 
+            # This normalizes the score so 'Total_g' (big numbers) doesn't overpower 'Clover' (small numbers).
+            current_penalty = 0
+            for t in targets_to_balance:
+                means_array = np.array(fold_means[t])
+                # If global mean is 0, avoid division by zero
+                global_mean = df_search[t].mean() + 1e-6 
+                
+                # How much do the folds deviate from each other?
+                cv = np.std(means_array) / global_mean
+                current_penalty += cv
+            
+            # If this seed is more balanced than the previous best, save it
+            if current_penalty < lowest_penalty:
+                lowest_penalty = current_penalty
+                best_seed = seed
+                
+        except ValueError:
+            continue
+
+    print("-" * 50)
+    print(f"✅ Best Seed Found: {best_seed}")
+    print(f"📉 Penalty Score: {lowest_penalty:.4f} (Lower is better)")
+    
+    return best_seed

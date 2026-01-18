@@ -12,7 +12,7 @@ def get_spatial_transforms():
         A.RandomRotate90(p=0.5),
     ], 
     p=1.0,
-    additional_targets={'image_right': 'image'},
+    # additional_targets={'image_right': 'image'},
     seed=CFG.SEED 
     )
 def get_photometric_transforms():

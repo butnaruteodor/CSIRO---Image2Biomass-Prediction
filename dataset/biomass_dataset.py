@@ -4,6 +4,7 @@ import os, cv2, numpy as np
 import torch
 from PIL import Image
 import random
+import pandas as pd
 
 class BiomassDatasetBase(Dataset):
     def __init__(self, df, transform, photometric_transform, img_dir):
@@ -23,14 +24,20 @@ class BiomassDatasetBase(Dataset):
             img = np.zeros((1000, 2000, 3), dtype=np.uint8)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
+        ts = pd.to_datetime(self.df['Sampling_Date'].iloc[idx])
+        month_int = ts.month 
+        month = torch.tensor(month_int, dtype=torch.long)
+        
         h, w, _ = img.shape
         mid = w // 2
         left  = img[:, :mid]
         right = img[:, mid:]
         if self.transform:
-            transformed = self.transform(image=left, image_right=right)
-            left  = transformed['image']
-            right = transformed['image_right']
+            # transformed = self.transform(image=left, image_right=right)
+            # left  = transformed['image']
+            # right = transformed['image_right']
+            left = self.transform(image=left)['image']
+            right = self.transform(image=right)['image']
 
         # 2. Apply PHOTOMETRIC transforms (independently)
         left  = self.ph_transform(image=left)['image']

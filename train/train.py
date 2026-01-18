@@ -42,7 +42,7 @@ def train_epoch_clip(model, loader, opt, scheduler, device, scaler, text_anchors
     return running / len(loader)
 
 
-def train_epoch_base(model, loader, opt, scheduler, device, scaler):
+def train_epoch_base(model, loader, opt, scheduler, device, scaler, deltas):
     model.train()
     running = 0.0
 
@@ -50,8 +50,9 @@ def train_epoch_base(model, loader, opt, scheduler, device, scaler):
     for i, (l, r, lab) in enumerate(tqdm(loader, desc='train', leave=False)):
         l, r, lab = l.to(device, non_blocking=True), r.to(device, non_blocking=True), lab.to(device, non_blocking=True)
         with autocast('cuda',dtype=torch.bfloat16):
-            (p_clover, p_dead, p_green) = model(l, r)
-            loss_reg = weighted_biomass_loss(p_clover, p_dead, p_green, lab, use_huber=False)
+            (p_tot, p_gdm, p_green) = model(l, r)
+            loss_reg = weighted_biomass_loss(p_tot, p_gdm, p_green, lab, deltas)
+            # loss_reg = weighted_biomass_log_loss(p_tot, p_gdm, p_green, lab)
             total_loss = loss_reg
         
         loss = total_loss / CFG.GRAD_ACC
@@ -107,35 +108,35 @@ def train_epoch_base_w_clip(model, loader, opt, scheduler, device, scaler, text_
     return running / len(loader.dataset)
 
 @torch.no_grad()
-def valid_epoch_base(model, loader, device):
+def valid_epoch_base(model, loader, device, deltas):
     model.eval()
     running_loss = 0.0
-    preds = {'clover':[], 'dead':[], 'green':[]}
+    preds = {'total':[], 'gdm':[], 'green':[]}
     all_labels = []
 
     for l, r, lab in tqdm(loader, desc='valid', leave=False):
         l, r, lab = l.to(device, non_blocking=True), r.to(device, non_blocking=True), lab.to(device, non_blocking=True)
         with autocast('cuda',dtype=torch.bfloat16):
-            (p_clover, p_dead, p_green) = model(l, r)
+            (p_tot, p_gdm, p_green) = model(l, r)
 
-            loss = weighted_biomass_loss(p_clover, p_dead, p_green, lab)
-
+            loss = weighted_biomass_loss(p_tot, p_gdm, p_green, lab, deltas)
+            # loss = weighted_biomass_log_loss(p_tot, p_gdm, p_green, lab)
         running_loss += loss.item() * l.size(0)
 
-        preds['clover'].extend(p_clover.cpu().float().numpy().ravel())
-        preds['dead'].extend(p_dead.cpu().float().numpy().ravel())
+        preds['total'].extend(p_tot.cpu().float().numpy().ravel())
+        preds['gdm'].extend(p_gdm.cpu().float().numpy().ravel())
         preds['green'].extend(p_green.cpu().float().numpy().ravel())
         all_labels.extend(lab.cpu().float().numpy())
 
     # Convert to numpy
-    pred_clover = np.array(preds['clover'])
-    pred_dead   = np.array(preds['dead'])
+    pred_total = np.array(preds['total'])
+    pred_gdm   = np.array(preds['gdm'])
     pred_green = np.array(preds['green'])
     true_labels = np.stack(all_labels)  # (N, 5)
 
     # Compute derived
-    pred_gdm = np.clip(pred_clover + pred_green, 0, None)
-    pred_total   = np.clip(pred_dead + pred_gdm, 0, None)
+    pred_clover = np.clip(pred_gdm - pred_green, 0, None)
+    pred_dead   = np.clip(pred_total - pred_gdm, 0, None)
 
     # Stack predictions in correct order
     pred_all = np.stack([
@@ -284,6 +285,11 @@ def train_clip(tr_df, val_df):
     return model
 
 def train_base(tr_df, val_df, model_id, model_state_dict=None, group_name=None, test_df=None):
+    train_labels_tensor = torch.tensor(
+        tr_df[["Dry_Green_g", "Dry_Dead_g", "Dry_Clover_g", "GDM_g", "Dry_Total_g"]].values, 
+        dtype=torch.float32
+    )
+    deltas = calculate_deltas(train_labels_tensor)
     tr_set = BiomassDatasetBase(tr_df, get_spatial_transforms(), get_photometric_transforms(), CFG.TRAIN_IMAGE_DIR)
     val_set= BiomassDatasetBase(val_df, None, get_val_transforms(), CFG.TRAIN_IMAGE_DIR)
     if test_df is not None:
@@ -336,8 +342,8 @@ def train_base(tr_df, val_df, model_id, model_state_dict=None, group_name=None, 
     patience = 0
     scaler = torch.amp.GradScaler('cuda')
     for epoch in range(1, CFG.EPOCHS+1):
-        tr_loss = train_epoch_base(model, tr_loader, optimizer, scheduler, CFG.DEVICE, scaler)
-        val_loss, val_r2 = valid_epoch_base(model, val_loader, CFG.DEVICE)
+        tr_loss = train_epoch_base(model, tr_loader, optimizer, scheduler, CFG.DEVICE, scaler, deltas)
+        val_loss, val_r2 = valid_epoch_base(model, val_loader, CFG.DEVICE, deltas)
         test_loss, test_val_r2=0,0
         if test_df is not None:
             test_loss, test_val_r2 = valid_epoch_base(model, test_loader, CFG.DEVICE)
@@ -371,3 +377,45 @@ def train_base(tr_df, val_df, model_id, model_state_dict=None, group_name=None, 
     finish_logger()
     del optimizer,val_loader,tr_loader,model
     return best_r2
+
+
+@torch.no_grad()
+def get_predictions(model, loader, device):
+    model.eval()
+    running_loss = 0.0
+    preds = {'total':[], 'gdm':[], 'green':[]}
+    all_labels = []
+
+    for l, r, lab in tqdm(loader, desc='valid', leave=False):
+        l, r, lab = l.to(device, non_blocking=True), r.to(device, non_blocking=True), lab.to(device, non_blocking=True)
+        with autocast('cuda',dtype=torch.bfloat16):
+            (p_tot, p_gdm, p_green) = model(l, r)
+
+            loss = weighted_biomass_loss(p_tot, p_gdm, p_green, lab)
+        running_loss += loss.item() * l.size(0)
+
+        preds['total'].extend(p_tot.cpu().float().numpy().ravel())
+        preds['gdm'].extend(p_gdm.cpu().float().numpy().ravel())
+        preds['green'].extend(p_green.cpu().float().numpy().ravel())
+        all_labels.extend(lab.cpu().float().numpy())
+
+    # Convert to numpy
+    pred_total = np.array(preds['total'])
+    pred_gdm   = np.array(preds['gdm'])
+    pred_green = np.array(preds['green'])
+    true_labels = np.stack(all_labels)  # (N, 5)
+
+    # Compute derived
+    pred_clover = np.clip(pred_gdm - pred_green, 0, None)
+    pred_dead   = np.clip(pred_total - pred_gdm, 0, None)
+
+    # Stack predictions in correct order
+    pred_all = np.stack([
+        pred_green,      # Dry_Green_g
+        pred_dead,       # Dry_Dead_g
+        pred_clover,     # Dry_Clover_g
+        pred_gdm,        # GDM_g
+        pred_total       # Dry_Total_g
+    ], axis=1)
+
+    return pred_all, true_labels

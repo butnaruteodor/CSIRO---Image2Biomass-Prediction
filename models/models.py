@@ -5,38 +5,13 @@ import open_clip
 from peft import LoraConfig, get_peft_model
 import torch.nn.functional as F
 
-class GatedCrossModulation(nn.Module):
-    def __init__(self, dim):
-        super().__init__()
-        # Learnable gates: "Which features should I boost?"
-        self.gate_layer = nn.Sequential(
-            nn.Linear(dim, dim),
-            nn.Sigmoid() 
-        )
-
-    def forward(self, f1, f2):
-        # 1. Calculate Gates
-        g1 = self.gate_layer(f1) 
-        g2 = self.gate_layer(f2)
-        
-        # 2. Modulate (Boost)
-        # "If slice 1 has clover, boost the clover channels in slice 2"
-        f2_boosted = f2 * g1 
-        f1_boosted = f1 * g2
-        
-        # 3. Residual Sum
-        # We add the original signals (f1, f2) to the boosted ones so we don't lose info,
-        # then SUM the two streams together (simulating "Total Biomass").
-        return (f1 + f1_boosted) + (f2 + f2_boosted)
-
 class BiomassModelMLP(nn.Module):
-    def __init__(self, model_name, freeze_backbone=False, checkpoint_path=None, model_state_dict=None):
+    def __init__(self, model_name, freeze_backbone=False, checkpoint_path=None, model_state_dict=None, is_linear=False):
         super().__init__()
-        
+        self.is_linear=is_linear
         # 1. Image Backbone
         self.backbone = timm.create_model(
             model_name, pretrained=False, num_classes=0)
-        
         print(f"{CFG.MODEL_NAME} parameters: {sum(p.numel() for p in self.backbone.parameters() if p.requires_grad)}")
         self.load_pretrained()
 
@@ -49,11 +24,9 @@ class BiomassModelMLP(nn.Module):
             print("Loading pretrained clip model")
             self.backbone.load_state_dict(model_state_dict, strict=True)
 
-        # self.backbone.avg_pool=GeM()
         nf = self.backbone.num_features
-        self.fusion = GatedCrossModulation(nf)
         # We have TWO image feature streams (left + right)
-        image_feature_dim = nf
+        image_feature_dim = nf * 2
 
         # 3. Main Head
         self.head = nn.Sequential(
@@ -64,8 +37,10 @@ class BiomassModelMLP(nn.Module):
             nn.ReLU(inplace=True),
             nn.Dropout(0.3)
         )
-        self.regressor = nn.Linear(image_feature_dim//4, 3)
-
+        if is_linear:
+            self.regressor = nn.Linear(image_feature_dim, 3)
+        else:
+            self.regressor = nn.Linear(image_feature_dim//4, 3)
         if freeze_backbone:
             self.freeze_backbone()
 
@@ -98,15 +73,16 @@ class BiomassModelMLP(nn.Module):
         fl = self.backbone(left)
         fr = self.backbone(right)
 
-        # image_features = torch.cat([fl + fr, fl * fr], dim=1) # [B, 1536] (if ConvNeXt-Tiny)
-        fused_features = self.fusion(fl, fr)
-
-        fused = self.head(fused_features)
-        predictions = self.regressor(fused)
+        image_features = torch.cat([fl, fr], dim=1)
+        if not self.is_linear:
+            fused = self.head(image_features)
+            predictions = self.regressor(fused)
+        else:
+            predictions = self.regressor(image_features)
         
         p_total, p_gdm, p_green = predictions.split(1, dim=1)
         
-        return (p_total, p_gdm, p_green)
+        return (F.softplus(p_total), F.softplus(p_gdm), F.softplus(p_green))
     
 
 def get_lora_model():

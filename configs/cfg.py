@@ -34,7 +34,7 @@ class CFG:
     WARMUP_HEAD_EPOCHS = 5
 
     DETERMINISTIC = True
-    SEED = 3858
+    SEED = 204 # 3858 state+date 204 date
 
     TARGET_COLS    = ['Dry_Total_g', 'GDM_g', 'Dry_Green_g']
     DERIVED_COLS   = ['Dry_Clover_g', 'Dry_Dead_g']
