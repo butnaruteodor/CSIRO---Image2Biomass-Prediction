@@ -6,4 +6,5 @@ wandb/
 csiro-biomass/train/*
 *.pt
 *.pth
+*.pyc
 __pycache__/

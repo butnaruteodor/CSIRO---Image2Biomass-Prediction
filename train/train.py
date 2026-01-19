@@ -6,6 +6,7 @@ import copy
 from datetime import datetime
 
 from utils.eval import *
+from utils.utils import *
 from dataset.biomass_dataset import *
 from utils.augs import *
 from configs.deterministic import *
@@ -149,7 +150,8 @@ def valid_epoch_base(model, loader, device, deltas):
 
     # Compute weighted R²
     weighted_r2 = global_weighted_r2_score(true_labels, pred_all)
-    return running_loss / len(loader.dataset), weighted_r2
+    per_target_r2 = per_target_r2_score(true_labels, pred_all)
+    return running_loss / len(loader.dataset), weighted_r2, per_target_r2
 
 def valid_epoch_clip(model, loader, text_anchors, device, val_index_offset=0):
     model.eval()
@@ -290,6 +292,8 @@ def train_base(tr_df, val_df, model_id, model_state_dict=None, group_name=None, 
         dtype=torch.float32
     )
     deltas = calculate_deltas(train_labels_tensor)
+    priors = calculate_biomass_priors(train_labels_tensor)
+
     tr_set = BiomassDatasetBase(tr_df, get_spatial_transforms(), get_photometric_transforms(), CFG.TRAIN_IMAGE_DIR)
     val_set= BiomassDatasetBase(val_df, None, get_val_transforms(), CFG.TRAIN_IMAGE_DIR)
     if test_df is not None:
@@ -309,6 +313,7 @@ def train_base(tr_df, val_df, model_id, model_state_dict=None, group_name=None, 
             freeze_backbone=CFG.FREEZE_BACKBONE,
             model_state_dict=model_state_dict
         )
+    # init_ratio_biases(model, priors)
     model = model.to(CFG.DEVICE)
     # model = nn.DataParallel(model)
 
@@ -343,19 +348,25 @@ def train_base(tr_df, val_df, model_id, model_state_dict=None, group_name=None, 
     scaler = torch.amp.GradScaler('cuda')
     for epoch in range(1, CFG.EPOCHS+1):
         tr_loss = train_epoch_base(model, tr_loader, optimizer, scheduler, CFG.DEVICE, scaler, deltas)
-        val_loss, val_r2 = valid_epoch_base(model, val_loader, CFG.DEVICE, deltas)
+        val_loss, val_r2, per_target_r2 = valid_epoch_base(model, val_loader, CFG.DEVICE, deltas)
         test_loss, test_val_r2=0,0
         if test_df is not None:
-            test_loss, test_val_r2 = valid_epoch_base(model, test_loader, CFG.DEVICE)
+            test_loss, test_val_r2, per_target_r2 = valid_epoch_base(model, test_loader, CFG.DEVICE)
 
         if val_r2>best_r2:
             print(f'Epoch {epoch:02d} | '
                 f'TrainLoss {tr_loss:.5f} | '
                 f'ValLoss {val_loss:.5f} | '
-                f'ValR² {val_r2:.4f} {"(BEST)" if val_r2 > best_r2 else ""}')
+                f'ValR² {val_r2:.4f} {"(BEST)" if val_r2 > best_r2 else ""} | '
+                f'GreenR² {per_target_r2["Dry_Green"]:.5f} | '
+                f'DeadR² {per_target_r2["Dry_Dead"]:.5f} | '
+                f'CloverR² {per_target_r2["Dry_Clover"]:.5f} | '
+                f'GDMR² {per_target_r2["GDM"]:.5f} | '
+                f'TotalR² {per_target_r2["Dry_Total"]:.5f}')
         if test_df is not None:
             print(f'TestLoss {test_loss:.5f} | TestR2: {test_val_r2:.4f}')
-        log_data = {"train_loss": tr_loss, "val_loss": val_loss, "val_r2": val_r2, "best_r2":best_r2, "test_loss": test_loss, "test_val_r2":test_val_r2}
+        log_data = {"train_loss": tr_loss, "val_loss": val_loss, "val_r2": val_r2, "best_r2":best_r2, "test_loss": test_loss, "test_val_r2":test_val_r2, "r2_green": per_target_r2['Dry_Green'],
+                    "r2_dead": per_target_r2['Dry_Dead'],"r2_clover": per_target_r2['Dry_Clover'],"r2_gdm": per_target_r2['GDM'],"r2_total": per_target_r2['Dry_Total']}
 
         if val_r2 > best_r2:
             best_r2 = val_r2
@@ -371,7 +382,8 @@ def train_base(tr_df, val_df, model_id, model_state_dict=None, group_name=None, 
                     log(log_data, e)
                 break
 
-        log_data = {"train_loss": tr_loss, "val_loss": val_loss, "val_r2": val_r2, "best_r2":best_r2, "test_loss": test_loss, "test_val_r2":test_val_r2}
+        log_data = {"train_loss": tr_loss, "val_loss": val_loss, "val_r2": val_r2, "best_r2":best_r2, "test_loss": test_loss, "test_val_r2":test_val_r2, "r2_green": per_target_r2['Dry_Green'],
+                    "r2_dead": per_target_r2['Dry_Dead'],"r2_clover": per_target_r2['Dry_Clover'],"r2_gdm": per_target_r2['GDM'],"r2_total": per_target_r2['Dry_Total']}
         log(log_data, epoch)
 
     finish_logger()

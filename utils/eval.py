@@ -2,6 +2,29 @@ import numpy as np
 from configs.cfg import CFG
 import torch.nn as nn
 import torch
+from sklearn.metrics import r2_score
+
+def per_target_r2_score(y_true: np.ndarray, y_pred: np.ndarray):
+    """
+    Computes the standard R² score for each of the 5 targets individually.
+    
+    Args:
+        y_true: Ground truth array of shape (N, 5)
+        y_pred: Predictions array of shape (N, 5)
+        
+    Returns:
+        dict: A dictionary mapping target names to their R² scores.
+    """
+    target_names = ["Dry_Green", "Dry_Dead", "Dry_Clover", "GDM", "Dry_Total"]
+    scores = {}
+
+    # 'raw_values' returns an array of R² scores, one for each column
+    raw_scores = r2_score(y_true, y_pred, multioutput='raw_values')
+
+    for i, name in enumerate(target_names):
+        scores[name] = raw_scores[i]
+        
+    return scores
 
 def global_weighted_r2_score(y_true: np.ndarray, y_pred: np.ndarray):
     """
@@ -22,24 +45,6 @@ def global_weighted_r2_score(y_true: np.ndarray, y_pred: np.ndarray):
     # R²_w = 1 - (SS_res / SS_tot)
     r2_w = 1 - (ss_res / ss_tot)
     return r2_w
-
-def weighted_r2_score(y_true: np.ndarray, y_pred: np.ndarray):
-    """
-    y_true, y_pred: shape (N, 5)
-    weights: [0.1, 0.1, 0.1, 0.2, 0.5]
-    """
-    weights = CFG.R2_WEIGHTS
-    r2_scores = []
-    for i in range(5):
-        y_t = y_true[:, i]
-        y_p = y_pred[:, i]
-        ss_res = np.sum((y_t - y_p) ** 2)
-        ss_tot = np.sum((y_t - np.mean(y_t)) ** 2)
-        r2 = 1 - ss_res / ss_tot if ss_tot > 0 else 0.0
-        r2_scores.append(r2)
-    r2_scores = np.array(r2_scores)
-    weighted_r2 = np.sum(r2_scores * weights) / np.sum(weights)
-    return weighted_r2
 
 def calculate_deltas(labels):
     """
@@ -129,8 +134,8 @@ def weighted_biomass_loss(p_total, p_gdm, p_green, labels, deltas):
     """
     # loss_fn = nn.HuberLoss(delta=15.0) if use_huber else nn.MSELoss()
     loss_fn = AdaptiveHuberLoss(deltas)
-    # loss_fn = nn.PoissonNLLLoss(log_input=False, full=True)
-    
+    # total = gdm + dead
+    # gdm = clover + green
     # Calculate derived predictions
     p_clover = torch.clamp(p_gdm - p_green, min=0)
     p_dead   = torch.clamp(p_total - p_gdm, min=0)

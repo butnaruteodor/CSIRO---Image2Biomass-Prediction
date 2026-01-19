@@ -3,6 +3,7 @@ import open_clip
 from peft import PeftModel
 from collections import OrderedDict
 from configs.cfg import CFG
+import numpy as np
 
 def compare_structure(path_a, path_b):
     print(f"--- Structure Comparison ---")
@@ -96,3 +97,62 @@ def get_clean_timm_state_dict(model):
 
     # print(f"Conversion complete! {len(clean_state_dict)} keys ready for timm.")
     return clean_state_dict
+
+def calculate_biomass_priors(labels):
+    """
+    Calculates the inverse-sigmoid bias values for the two ratio heads.
+    
+    Args:
+        labels: Tensor [N, 5] corresponding to:
+                [Green, Dead, Clover, GDM, Total]
+    Returns:
+        dict: {'gdm_bias': float, 'green_bias': float}
+    """
+    # Summing prevents division by zero on small plants and gives a weighted average
+    total_mass = labels[:, 4].sum()
+    gdm_mass   = labels[:, 3].sum()
+    green_mass = labels[:, 0].sum()
+    
+    # 1. Ratio GDM = GDM / Total
+    # Add epsilon 1e-6 to avoid numerical errors
+    avg_gdm_ratio = (gdm_mass / (total_mass + 1e-6)).item()
+    
+    # 2. Ratio Green = Green / GDM
+    avg_green_ratio = (green_mass / (gdm_mass + 1e-6)).item()
+    
+    # 3. Inverse Sigmoid Calculation: b = ln(p / (1-p))
+    # We clip the ratio to [0.01, 0.99] to prevent math errors if data is skewed
+    avg_gdm_ratio = np.clip(avg_gdm_ratio, 0.01, 0.99)
+    avg_green_ratio = np.clip(avg_green_ratio, 0.01, 0.99)
+    
+    bias_gdm = np.log(avg_gdm_ratio / (1 - avg_gdm_ratio))
+    bias_green = np.log(avg_green_ratio / (1 - avg_green_ratio))
+    
+    print(f"Calculated Priors -> GDM Ratio: {avg_gdm_ratio:.2f} (Bias: {bias_gdm:.2f})")
+    print(f"Calculated Priors -> Green Ratio: {avg_green_ratio:.2f} (Bias: {bias_green:.2f})")
+    
+    return {'gdm_bias': bias_gdm, 'green_bias': bias_green}
+
+def init_ratio_biases(model, priors):
+    """
+    Initializes the biases of the two ratio heads in the model.
+    """
+    with torch.no_grad():
+        # --- Head 1: Ratio GDM ---
+        # We assume head is Sequential(..., Linear, Sigmoid)
+        # We need to find the last Linear layer to set the bias
+        for layer in reversed(model.head_ratio_gdm):
+            if isinstance(layer, torch.nn.Linear):
+                layer.bias.fill_(0.1)
+                # Optional: reduce weight noise so bias dominates at start
+                layer.weight.normal_(0, 0.01) 
+                break
+        
+        # --- Head 2: Ratio Green ---
+        for layer in reversed(model.head_ratio_green):
+            if isinstance(layer, torch.nn.Linear):
+                layer.bias.fill_(0.1)
+                layer.weight.normal_(0, 0.01)
+                break
+                
+    print("Ratio heads initialized.")

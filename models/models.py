@@ -29,18 +29,38 @@ class BiomassModelMLP(nn.Module):
         image_feature_dim = nf * 2
 
         # 3. Main Head
-        self.head = nn.Sequential(
+        # self.head = nn.Sequential(
+        #     nn.Linear(image_feature_dim, image_feature_dim//2), 
+        #     nn.ReLU(inplace=True),
+        #     nn.Dropout(0.3),
+        #     nn.Linear(image_feature_dim//2, image_feature_dim//4),
+        #     nn.ReLU(inplace=True),
+        #     nn.Dropout(0.3)
+        # )
+        # if is_linear:
+        #     self.regressor = nn.Linear(image_feature_dim, 3)
+        # else:
+        #     self.regressor = nn.Linear(image_feature_dim//4, 3)
+        self.head_total = nn.Sequential(
             nn.Linear(image_feature_dim, image_feature_dim//2), 
-            nn.ReLU(inplace=True),
+            nn.GELU(),
             nn.Dropout(0.3),
             nn.Linear(image_feature_dim//2, image_feature_dim//4),
-            nn.ReLU(inplace=True),
-            nn.Dropout(0.3)
+            nn.GELU(),
+            nn.Dropout(0.3),
+            nn.Linear(image_feature_dim//4, 1)
         )
-        if is_linear:
-            self.regressor = nn.Linear(image_feature_dim, 3)
-        else:
-            self.regressor = nn.Linear(image_feature_dim//4, 3)
+        self.head_ratios = nn.Sequential(
+            nn.Linear(image_feature_dim, image_feature_dim//2), 
+            nn.GELU(),
+            nn.Dropout(0.3),
+            nn.Linear(image_feature_dim//2, image_feature_dim//4),
+            nn.GELU(),
+            nn.Dropout(0.3),
+            nn.Linear(image_feature_dim//4, 2),
+            nn.Sigmoid() # Forces output between 0 and 1
+        )
+
         if freeze_backbone:
             self.freeze_backbone()
 
@@ -74,15 +94,18 @@ class BiomassModelMLP(nn.Module):
         fr = self.backbone(right)
 
         image_features = torch.cat([fl, fr], dim=1)
-        if not self.is_linear:
-            fused = self.head(image_features)
-            predictions = self.regressor(fused)
-        else:
-            predictions = self.regressor(image_features)
+        p_total = F.softplus(self.head_total(image_features))
+
+        preds = self.head_ratios(image_features)
+        r_dead, r_clover = preds.split(1, dim=1)
+
+        p_dead  = p_total * r_dead
+        p_clover  = p_total * r_clover
+
+        p_gdm = p_total - p_dead
+        p_green = p_gdm - p_clover
         
-        p_total, p_gdm, p_green = predictions.split(1, dim=1)
-        
-        return (F.softplus(p_total), F.softplus(p_gdm), F.softplus(p_green))
+        return (p_total, p_gdm, p_green)
     
 
 def get_lora_model():
