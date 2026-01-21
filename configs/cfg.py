@@ -6,11 +6,11 @@ class CFG:
     TRAIN_IMAGE_DIR = os.path.join(BASE_PATH, 'train')
     MODEL_DIR       = 'out'
     N_FOLDS         = 5
-    LOG             = True
+    LOG             = False
 
     # TIMM
-    MODEL_NAME = 'vit_small_patch16_dinov3'
-    PATIENCE     = 15
+    MODEL_NAME = 'vit_large_patch16_dinov3'
+    PATIENCE     = 10
     
     # CLIP
     CLIP_NAME    = 'convnext_base_w'
@@ -22,10 +22,10 @@ class CFG:
     CHECKPOINT_PATH = None #'adapters/r8/lora_finetuned_convnext_base_r8.pt'
     FREEZE_BACKBONE = True
 
-    IMG_SIZE     = 512 
+    IMG_SIZE     = 768 
     ALPHA_CLIP   = 0.1
-    BATCH_SIZE   = 1
-    GRAD_ACC     = 8    # effective batch = 8
+    BATCH_SIZE   = 8
+    GRAD_ACC     = 1    # effective batch = 8
     NUM_WORKERS  = 4
     EPOCHS       = 100
     LR           = 1e-3

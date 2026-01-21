@@ -28,24 +28,11 @@ class BiomassModelMLP(nn.Module):
         # We have TWO image feature streams (left + right)
         image_feature_dim = nf * 2
 
-        # 3. Main Head
-        # self.head = nn.Sequential(
-        #     nn.Linear(image_feature_dim, image_feature_dim//2), 
-        #     nn.ReLU(inplace=True),
-        #     nn.Dropout(0.3),
-        #     nn.Linear(image_feature_dim//2, image_feature_dim//4),
-        #     nn.ReLU(inplace=True),
-        #     nn.Dropout(0.3)
-        # )
-        # if is_linear:
-        #     self.regressor = nn.Linear(image_feature_dim, 3)
-        # else:
-        #     self.regressor = nn.Linear(image_feature_dim//4, 3)
         self.head_total = nn.Sequential(
             nn.Linear(image_feature_dim, image_feature_dim//2), 
             nn.GELU(),
             nn.Dropout(0.3),
-            nn.Linear(image_feature_dim//2, image_feature_dim//4),
+            nn.Linear(image_feature_dim//2, image_feature_dim//4), 
             nn.GELU(),
             nn.Dropout(0.3),
             nn.Linear(image_feature_dim//4, 1)
@@ -54,7 +41,7 @@ class BiomassModelMLP(nn.Module):
             nn.Linear(image_feature_dim, image_feature_dim//2), 
             nn.GELU(),
             nn.Dropout(0.3),
-            nn.Linear(image_feature_dim//2, image_feature_dim//4),
+            nn.Linear(image_feature_dim//2, image_feature_dim//4), 
             nn.GELU(),
             nn.Dropout(0.3),
             nn.Linear(image_feature_dim//4, 2),
@@ -94,6 +81,7 @@ class BiomassModelMLP(nn.Module):
         fr = self.backbone(right)
 
         image_features = torch.cat([fl, fr], dim=1)
+
         p_total = F.softplus(self.head_total(image_features))
 
         preds = self.head_ratios(image_features)
@@ -106,7 +94,50 @@ class BiomassModelMLP(nn.Module):
         p_green = p_gdm - p_clover
         
         return (p_total, p_gdm, p_green)
-    
+
+class BiomassSimpleMLP(nn.Module):
+    def __init__(self, image_feature_dim):
+        super().__init__()
+
+        self.head_total = nn.Sequential(
+            nn.Linear(image_feature_dim, image_feature_dim//2), 
+            nn.GELU(),
+            nn.Dropout(0.3),
+            nn.Linear(image_feature_dim//2, image_feature_dim//4), 
+            nn.GELU(),
+            nn.Dropout(0.3),
+            nn.Linear(image_feature_dim//4, image_feature_dim//8), 
+            nn.GELU(),
+            nn.Dropout(0.3),
+            nn.Linear(image_feature_dim//8, 1)
+        )
+        self.head_ratios = nn.Sequential(
+            nn.Linear(image_feature_dim, image_feature_dim//2), 
+            nn.GELU(),
+            nn.Dropout(0.3),
+            nn.Linear(image_feature_dim//2, image_feature_dim//4), 
+            nn.GELU(),
+            nn.Dropout(0.3),
+            nn.Linear(image_feature_dim//4, image_feature_dim//8), 
+            nn.GELU(),
+            nn.Dropout(0.3),
+            nn.Linear(image_feature_dim//8, 2),
+            nn.Sigmoid() # Forces output between 0 and 1
+        )
+
+    def forward(self, feats):
+        p_total = F.softplus(self.head_total(feats))
+
+        preds = self.head_ratios(feats)
+        r_dead, r_clover = preds.split(1, dim=1)
+
+        p_dead  = p_total * r_dead
+        p_clover  = p_total * r_clover
+
+        p_gdm = p_total - p_dead
+        p_green = p_gdm - p_clover
+        
+        return (p_total, p_gdm, p_green)
 
 def get_lora_model():
     print(f"Loading OpenCLIP model: {CFG.CLIP_NAME}...")
@@ -225,3 +256,100 @@ def get_lora_model_with_attention():
     print(f"Model Ready. Total Trainable Parameters (LoRA + Attention): {trainable_params:,}")
     
     return final_model, preprocess, tokenizer
+
+
+class LocalMambaBlock(nn.Module):
+    """Lightweight Mamba-like block"""
+
+    def __init__(self, dim: int, kernel_size: int = 5, dropout: float = 0.1):
+        super().__init__()
+        self.norm = nn.LayerNorm(dim)
+        self.dwconv = nn.Conv1d(dim, dim, kernel_size=kernel_size,
+                                 padding=kernel_size // 2, groups=dim)
+        self.gate = nn.Linear(dim, dim)
+        self.proj = nn.Linear(dim, dim)
+        self.drop = nn.Dropout(dropout)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        shortcut = x
+        x = self.norm(x)
+        g = torch.sigmoid(self.gate(x))
+        x = x * g
+        x = x.transpose(1, 2)
+        x = self.dwconv(x)
+        x = x.transpose(1, 2)
+        x = self.proj(x)
+        x = self.drop(x)
+        return shortcut + x
+    
+class LatentResampler(nn.Module):
+    """
+    Perceiver-style Resampler.
+    Uses 'num_latents' learnable queries to scan the input sequence 
+    and extract relevant information via Cross-Attention.
+    """
+    def __init__(self, input_dim, num_latents=64, num_heads=8):
+        super().__init__()
+        self.num_heads = num_heads
+        self.head_dim = input_dim // num_heads
+        self.scale = self.head_dim ** -0.5
+        
+        # 1. The Latent Queries (The "Scanners")
+        # Instead of 1 global token, we have 'num_latents' (e.g., 64)
+        # This preserves diversity (one token for dead, one for clover, etc.)
+        self.latents = nn.Parameter(torch.randn(1, num_latents, input_dim) * 0.02)
+        
+        # 2. Cross Attention Layers
+        self.q = nn.Linear(input_dim, input_dim)
+        self.kv = nn.Linear(input_dim, input_dim * 2)
+        self.proj = nn.Linear(input_dim, input_dim)
+        
+        self.norm_latents = nn.LayerNorm(input_dim)
+        self.norm_input   = nn.LayerNorm(input_dim)
+        
+        # 3. Internal processing for the latents (Self-computation)
+        self.mlp = nn.Sequential(
+            nn.Linear(input_dim, input_dim * 4),
+            nn.GELU(),
+            nn.Linear(input_dim * 4, input_dim)
+        )
+        self.norm_post = nn.LayerNorm(input_dim)
+
+    def forward(self, x):
+        # x: [Batch, N_Input_Tokens (2048), Dim]
+        B, N, C = x.shape
+        
+        # Expand latents to batch size
+        # latents: [Batch, 64, Dim]
+        latents = self.latents.expand(B, -1, -1)
+        
+        # --- CROSS ATTENTION ---
+        # Query = Latents (What we want to find)
+        # Key/Value = Input Image Patches (Where we look)
+        
+        # Apply Norms before attention (Pre-Norm architecture)
+        q_in = self.norm_latents(latents)
+        kv_in = self.norm_input(x)
+        
+        q = self.q(q_in).reshape(B, self.latents.shape[1], self.num_heads, self.head_dim).permute(0, 2, 1, 3)
+        
+        kv = self.kv(kv_in).reshape(B, N, 2, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)
+        k, v = kv[0], kv[1]
+        
+        # Attention Score: [Batch, Heads, Num_Latents, N_Inputs]
+        # This is where the magic happens: deciding which pixels matter for which latent
+        attn = (q @ k.transpose(-2, -1)) * self.scale
+        attn = attn.softmax(dim=-1)
+        
+        # Gather information
+        latents_out = (attn @ v).transpose(1, 2).reshape(B, self.latents.shape[1], C)
+        latents_out = self.proj(latents_out)
+        
+        # Residual connection
+        latents = latents + latents_out
+        
+        # Feed Forward (MLP) to process the extracted info
+        latents = latents + self.mlp(self.norm_post(latents))
+        
+        # Output: [Batch, Num_Latents (64), Dim]
+        return latents

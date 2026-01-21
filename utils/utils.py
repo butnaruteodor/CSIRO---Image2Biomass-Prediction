@@ -156,3 +156,46 @@ def init_ratio_biases(model, priors):
                 break
                 
     print("Ratio heads initialized.")
+
+def slerp(val, low, high):
+    """
+    Spherical Linear Interpolation
+    val: float between 0 and 1 (the lambda)
+    low: Starting vector [Batch, Dim]
+    high: Ending vector [Batch, Dim]
+    """
+    # 1. Normalize vectors to get direction
+    low_norm = low / torch.norm(low, dim=1, keepdim=True)
+    high_norm = high / torch.norm(high, dim=1, keepdim=True)
+
+    # 2. Calculate the angle (omega) between them
+    # Clamp dot product to -1..1 to avoid numerical errors
+    dot = (low_norm * high_norm).sum(1).clamp(-1, 1)
+    omega = torch.acos(dot)
+    
+    # 3. Calculate Slerp coefficients
+    sin_omega = torch.sin(omega)
+    
+    # Avoid division by zero for identical vectors
+    # If sin_omega is roughly 0, we just do linear interpolation
+    mask = sin_omega > 1e-6
+    
+    scale0 = torch.zeros_like(omega)
+    scale1 = torch.zeros_like(omega)
+    
+    # Standard Slerp Formula
+    scale0[mask] = torch.sin((1.0 - val) * omega[mask]) / sin_omega[mask]
+    scale1[mask] = torch.sin(val * omega[mask]) / sin_omega[mask]
+    
+    # Linear fallback
+    scale0[~mask] = 1.0 - val
+    scale1[~mask] = val
+    
+    # Expand dimensions for broadcasting
+    scale0 = scale0.unsqueeze(1)
+    scale1 = scale1.unsqueeze(1)
+    
+    # 4. Interpolate Direction
+    res = scale0 * low + scale1 * high
+    
+    return res

@@ -1,3 +1,4 @@
+import gc
 from torch.amp import autocast
 import torch
 from tqdm import tqdm
@@ -48,18 +49,33 @@ def train_epoch_base(model, loader, opt, scheduler, device, scaler, deltas):
     running = 0.0
 
     opt.zero_grad()
-    for i, (l, r, lab) in enumerate(tqdm(loader, desc='train', leave=False)):
-        l, r, lab = l.to(device, non_blocking=True), r.to(device, non_blocking=True), lab.to(device, non_blocking=True)
+    for i, (features, targets) in enumerate(tqdm(loader, desc='train', leave=False)):
+        features, targets = features.to(device, non_blocking=True), targets.to(device, non_blocking=True)
+        if np.random.rand() < 0.5: 
+            alpha = 0.8
+            lam = np.random.beta(alpha, alpha)
+            
+            # 2. Shuffle indices to find "Partner" for every sample
+            batch_size = features.size(0)
+            index = torch.randperm(batch_size).to(device)
+            
+            # 3. Create the Mixed Batch
+            # We blend Feature A with Feature B
+            features = slerp(lam, features, features[index])
+
+            # 4. Create the Mixed Targets
+            # We blend Label A with Label B (Works perfectly for regression!)
+            targets = lam * targets + (1 - lam) * targets[index]
         with autocast('cuda',dtype=torch.bfloat16):
-            (p_tot, p_gdm, p_green) = model(l, r)
-            loss_reg = weighted_biomass_loss(p_tot, p_gdm, p_green, lab, deltas)
+            (p_tot, p_gdm, p_green) = model(features)
+            loss_reg = weighted_biomass_loss(p_tot, p_gdm, p_green, targets, deltas)
             # loss_reg = weighted_biomass_log_loss(p_tot, p_gdm, p_green, lab)
             total_loss = loss_reg
         
         loss = total_loss / CFG.GRAD_ACC
         scaler.scale(loss).backward()
         # loss.backward()
-        running += loss.item() * l.size(0) * CFG.GRAD_ACC
+        running += loss.item() * features.size(0) * CFG.GRAD_ACC
 
         if (i + 1) % CFG.GRAD_ACC == 0 or (i + 1) == len(loader):
             scaler.unscale_(opt)
@@ -115,19 +131,18 @@ def valid_epoch_base(model, loader, device, deltas):
     preds = {'total':[], 'gdm':[], 'green':[]}
     all_labels = []
 
-    for l, r, lab in tqdm(loader, desc='valid', leave=False):
-        l, r, lab = l.to(device, non_blocking=True), r.to(device, non_blocking=True), lab.to(device, non_blocking=True)
+    for (features, targets) in tqdm(loader, desc='valid', leave=False):
+        features, targets = features.to(device, non_blocking=True), targets.to(device, non_blocking=True)
         with autocast('cuda',dtype=torch.bfloat16):
-            (p_tot, p_gdm, p_green) = model(l, r)
+            (p_tot, p_gdm, p_green) = model(features)
 
-            loss = weighted_biomass_loss(p_tot, p_gdm, p_green, lab, deltas)
-            # loss = weighted_biomass_log_loss(p_tot, p_gdm, p_green, lab)
-        running_loss += loss.item() * l.size(0)
+            loss = weighted_biomass_loss(p_tot, p_gdm, p_green, targets, deltas)
+        running_loss += loss.item() * features.size(0)
 
         preds['total'].extend(p_tot.cpu().float().numpy().ravel())
         preds['gdm'].extend(p_gdm.cpu().float().numpy().ravel())
         preds['green'].extend(p_green.cpu().float().numpy().ravel())
-        all_labels.extend(lab.cpu().float().numpy())
+        all_labels.extend(targets.cpu().float().numpy())
 
     # Convert to numpy
     pred_total = np.array(preds['total'])
@@ -283,44 +298,31 @@ def train_clip(tr_df, val_df):
     if best_model_weights is not None:
         model.load_state_dict(best_model_weights)
 
-    del optimizer,val_loader,tr_loader
+    del optimizer, val_loader, tr_loader
     return model
 
-def train_base(tr_df, val_df, model_id, model_state_dict=None, group_name=None, test_df=None):
+def train_base(fold_dir, tr_df, val_df, model_id, model_state_dict=None, group_name=None, test_df=None):
     train_labels_tensor = torch.tensor(
         tr_df[["Dry_Green_g", "Dry_Dead_g", "Dry_Clover_g", "GDM_g", "Dry_Total_g"]].values, 
         dtype=torch.float32
     )
     deltas = calculate_deltas(train_labels_tensor)
-    priors = calculate_biomass_priors(train_labels_tensor)
 
-    tr_set = BiomassDatasetBase(tr_df, get_spatial_transforms(), get_photometric_transforms(), CFG.TRAIN_IMAGE_DIR)
-    val_set= BiomassDatasetBase(val_df, None, get_val_transforms(), CFG.TRAIN_IMAGE_DIR)
-    if test_df is not None:
-        test_set = BiomassDatasetBase(test_df, None, get_val_transforms(), CFG.TRAIN_IMAGE_DIR)
+    train_data = torch.load(f"{fold_dir}/train.pt")
+    val_data   = torch.load(f"{fold_dir}/val.pt")
 
     g=get_generator()
-    tr_loader  = DataLoader(tr_set,  batch_size=CFG.BATCH_SIZE, shuffle=True,
-                            num_workers=CFG.NUM_WORKERS, pin_memory=True, drop_last=True, worker_init_fn=seed_worker,generator=g)
-    val_loader = DataLoader(val_set, batch_size=CFG.BATCH_SIZE, shuffle=False,
-                            num_workers=CFG.NUM_WORKERS, pin_memory=True, worker_init_fn=seed_worker,generator=g)
-    if test_df is not None:
-        test_loader = DataLoader(test_set, batch_size=CFG.BATCH_SIZE, shuffle=False,
-                            num_workers=CFG.NUM_WORKERS, pin_memory=True, worker_init_fn=seed_worker,generator=g)
+    train_ds = torch.utils.data.TensorDataset(train_data['features'], train_data['targets'])
+    val_ds   = torch.utils.data.TensorDataset(val_data['features'], val_data['targets'])
+    
+    tr_loader = DataLoader(train_ds, batch_size=CFG.BATCH_SIZE, shuffle=True, num_workers=CFG.NUM_WORKERS, pin_memory=True, drop_last=True, worker_init_fn=seed_worker,generator=g) # Huge batch size!
+    val_loader   = DataLoader(val_ds, batch_size=CFG.BATCH_SIZE, shuffle=False, num_workers=CFG.NUM_WORKERS, pin_memory=True, drop_last=True, worker_init_fn=seed_worker,generator=g)
+    
     print("Building model...")
-    model = BiomassModelMLP(
-            CFG.MODEL_NAME, 
-            freeze_backbone=CFG.FREEZE_BACKBONE,
-            model_state_dict=model_state_dict
-        )
-    # init_ratio_biases(model, priors)
+    model = BiomassSimpleMLP(2048)
     model = model.to(CFG.DEVICE)
     # model = nn.DataParallel(model)
-
-    if CFG.FREEZE_BACKBONE:
-        parameters = filter(lambda p: p.requires_grad, model.parameters())
-    else:
-        parameters = model.parameters()
+    parameters = model.parameters()
 
     optimizer = torch.optim.AdamW(parameters, lr=CFG.LR, weight_decay=CFG.WD)
 
@@ -350,8 +352,6 @@ def train_base(tr_df, val_df, model_id, model_state_dict=None, group_name=None, 
         tr_loss = train_epoch_base(model, tr_loader, optimizer, scheduler, CFG.DEVICE, scaler, deltas)
         val_loss, val_r2, per_target_r2 = valid_epoch_base(model, val_loader, CFG.DEVICE, deltas)
         test_loss, test_val_r2=0,0
-        if test_df is not None:
-            test_loss, test_val_r2, per_target_r2 = valid_epoch_base(model, test_loader, CFG.DEVICE)
 
         if val_r2>best_r2:
             print(f'Epoch {epoch:02d} | '
@@ -388,6 +388,8 @@ def train_base(tr_df, val_df, model_id, model_state_dict=None, group_name=None, 
 
     finish_logger()
     del optimizer,val_loader,tr_loader,model
+    gc.collect()
+    torch.cuda.empty_cache()
     return best_r2
 
 

@@ -1,9 +1,15 @@
 from sklearn.model_selection import StratifiedGroupKFold
+import timm
 from tqdm import tqdm
 from configs.cfg import CFG
+from dataset.biomass_dataset import *
+from torch.utils.data import Dataset, DataLoader
+from utils.augs import *
+from configs.deterministic import *
 import pandas as pd
 import numpy as np
 from datetime import datetime
+import torch
 
 def check_splits(splitter, df):
     fold_stats = []
@@ -168,3 +174,86 @@ def find_best_seed(df, n_seeds=2000):
     print(f"📉 Penalty Score: {lowest_penalty:.4f} (Lower is better)")
     
     return best_seed
+
+def extract_features_to_disk(df, model, save_path, mode='val', device='cuda'):
+    """
+    Runs images through DINO -> Pools -> Saves Tensors to .pt file
+    """
+    # Setup
+    multiplier = 10 if mode == 'train' else 1
+    spatial_transform = get_spatial_transforms() if mode=='train' else None
+    photometric_transform = get_photometric_transforms() if mode=='train' else get_val_transforms()
+    dataset = BiomassDatasetBase(df, transform=spatial_transform, photometric_transform=photometric_transform, img_dir=CFG.TRAIN_IMAGE_DIR, multiplier=multiplier)
+    g=get_generator()
+    loader = DataLoader(dataset, batch_size=CFG.BATCH_SIZE, shuffle=False, num_workers=4, worker_init_fn=seed_worker, generator=g)
+    
+    all_features = []
+    all_targets = []
+    
+    print(f"   -> Extracting {mode.upper()} set... ({len(dataset)} samples)")
+    
+    with torch.no_grad(), torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+        for left, right, targets in tqdm(loader, leave=False):
+            left = left.to(device)
+            right = right.to(device)
+            
+            # 1. Backbone Forward
+            f_l = model(left)  # [B, N, 384]
+            f_r = model(right)
+            
+            # 2. Concatenate Stereo
+            x_all = torch.cat([f_l, f_r], dim=1) # [B, 2048, 384]
+
+            # 4. Collect (Move to CPU immediately to save VRAM)
+            all_features.append(x_all.cpu())
+            all_targets.append(targets)
+            
+    # Save as one big dictionary
+    data_dict = {
+        'features': torch.cat(all_features),
+        'targets': torch.cat(all_targets)
+    }
+    torch.save(data_dict, save_path)
+    print(f"      Saved to {save_path}")
+
+# ---------------------------------------------------------
+# 4. The Main Orchestrator Function
+# ---------------------------------------------------------
+def prepare_cached_folds(df, splits, model_name, base_dir):
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    
+    # 1. Load Backbone ONCE
+    print(f"Loading Backbone: {model_name}...")
+    backbone = timm.create_model(model_name, pretrained=True, num_classes=0)
+    backbone.to(device)
+    backbone.eval() # Freeze
+    
+    # 2. Loop through Folds
+    for fold, (tr_idx, val_idx) in enumerate(splits):
+        print(f"\nProcessing FOLD {fold+1}...")
+        
+        # Create Fold Directory
+        fold_dir = os.path.join(base_dir, f"fold_{fold+1}")
+        os.makedirs(fold_dir, exist_ok=True)
+        
+        # Split DataFrame
+        tr_df = df.iloc[tr_idx]
+        val_df = df.iloc[val_idx]
+        
+        # Extract TRAIN (With Augmentations)
+        extract_features_to_disk(
+            tr_df, backbone, 
+            save_path=os.path.join(fold_dir, 'train.pt'), 
+            mode='train', device=device
+        )
+        
+        # Extract VAL (Clean)
+        # extract_features_to_disk(
+        #     val_df, backbone, 
+        #     save_path=os.path.join(fold_dir, 'val.pt'), 
+        #     mode='val', device=device
+        # )
+        
+    print("\nAll folds cached successfully!")
+    del backbone
+    torch.cuda.empty_cache()
