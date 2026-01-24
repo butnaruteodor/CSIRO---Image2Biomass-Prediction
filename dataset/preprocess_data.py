@@ -65,8 +65,8 @@ def get_df():
     df_wide['day_sin'] = np.sin(2 * np.pi * df_wide['day_of_year'] / 365.25)
     df_wide['day_cos'] = np.cos(2 * np.pi * df_wide['day_of_year'] / 365.25)
 
-    # df_wide['group'] = df_wide['State'].astype(str) + "_" + df_wide['Sampling_Date'].astype(str)
-    df_wide['group'] = df_wide['Sampling_Date'].astype(str)
+    df_wide['group'] = df_wide['State'].astype(str) + "_" + df_wide['Sampling_Date'].astype(str)
+    # df_wide['group'] = df_wide['Sampling_Date'].astype(str)
     df_wide['biomass_bin'] = pd.qcut(df_wide['Dry_Total_g'], q=10, labels=False)
 
     return df_wide
@@ -180,7 +180,7 @@ def extract_features_to_disk(df, model, save_path, mode='val', device='cuda'):
     Runs images through DINO -> Pools -> Saves Tensors to .pt file
     """
     # Setup
-    multiplier = 10 if mode == 'train' else 1
+    multiplier = 20 if mode == 'train' else 1
     spatial_transform = get_spatial_transforms() if mode=='train' else None
     photometric_transform = get_photometric_transforms() if mode=='train' else get_val_transforms()
     dataset = BiomassDatasetBase(df, transform=spatial_transform, photometric_transform=photometric_transform, img_dir=CFG.TRAIN_IMAGE_DIR, multiplier=multiplier)
@@ -248,12 +248,54 @@ def prepare_cached_folds(df, splits, model_name, base_dir):
         )
         
         # Extract VAL (Clean)
-        # extract_features_to_disk(
-        #     val_df, backbone, 
-        #     save_path=os.path.join(fold_dir, 'val.pt'), 
-        #     mode='val', device=device
-        # )
+        extract_features_to_disk(
+            val_df, backbone, 
+            save_path=os.path.join(fold_dir, 'val.pt'), 
+            mode='val', device=device
+        )
         
     print("\nAll folds cached successfully!")
     del backbone
     torch.cuda.empty_cache()
+
+from sklearn.neighbors import NearestNeighbors
+import numpy as np
+
+def get_plant_neighbor_map(features, views_per_plant=20, k=1):
+    """
+    Returns an array of size (N_samples,) where index [i] is the index 
+    of a sample from the NEAREST DIFFERENT PLANT.
+    """
+    # 1. Reshape to (N_plants, Views, Dim)
+    # Assumes data is ordered: [Plant1_v1...Plant1_v20, Plant2_v1...]
+    num_samples, dim = features.shape
+    num_plants = num_samples // views_per_plant
+    features_reshaped = features.view(num_plants, views_per_plant, dim)
+    
+    # 2. Calculate Plant Centroids (Average of all views)
+    centroids = features_reshaped.mean(dim=1).cpu().numpy()
+    
+    # 3. Find Nearest Neighbors between CENTROIDS
+    # k+1 because the closest is always itself
+    nbrs = NearestNeighbors(n_neighbors=k+1, metric='cosine', n_jobs=-1)
+    nbrs.fit(centroids)
+    _, plant_indices = nbrs.kneighbors(centroids)
+    
+    # The nearest neighbor that isn't itself is at index 1
+    nearest_plant_ids = plant_indices[:, 1] # Shape: (N_plants,)
+    
+    # 4. Create the Sample Map
+    # For every view of Plant A, we assign a random view of Plant B
+    neighbor_map = np.zeros(num_samples, dtype=int)
+    
+    for i in range(num_samples):
+        current_plant_id = i // views_per_plant
+        target_plant_id = nearest_plant_ids[current_plant_id]
+        
+        # Pick a random view from the target plant
+        random_view = np.random.randint(0, views_per_plant)
+        neighbor_idx = (target_plant_id * views_per_plant) + random_view
+        
+        neighbor_map[i] = neighbor_idx
+        
+    return neighbor_map

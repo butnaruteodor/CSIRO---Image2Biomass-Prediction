@@ -22,9 +22,9 @@ class CFG:
     CHECKPOINT_PATH = None #'adapters/r8/lora_finetuned_convnext_base_r8.pt'
     FREEZE_BACKBONE = True
 
-    IMG_SIZE     = 768 
+    IMG_SIZE     = 512 
     ALPHA_CLIP   = 0.1
-    BATCH_SIZE   = 8
+    BATCH_SIZE   = 64
     GRAD_ACC     = 1    # effective batch = 8
     NUM_WORKERS  = 4
     EPOCHS       = 100
@@ -34,12 +34,13 @@ class CFG:
     WARMUP_HEAD_EPOCHS = 5
 
     DETERMINISTIC = True
-    SEED = 204 # 3858 state+date 204 date
+    SEED = 3858 # 3858 state+date 204 date
 
     TARGET_COLS    = ['Dry_Total_g', 'GDM_g', 'Dry_Green_g']
     DERIVED_COLS   = ['Dry_Clover_g', 'Dry_Dead_g']
     ALL_TARGET_COLS = ['Dry_Green_g','Dry_Dead_g','Dry_Clover_g','GDM_g','Dry_Total_g']
-    R2_WEIGHTS     = np.array([0.1, 0.1, 0.1, 0.2, 0.5])  # matches metric
+    # R2_WEIGHTS     = np.array([0.1, 0.1, 0.1, 0.2, 0.5])  # matches metric
+    R2_WEIGHTS     = np.array([1.0, 1.0, 1.0, 1.0, 1.0])  # matches metric
     W_SPECIES = 0.25
     W_STATE = 0.25
     W_CONT = 0.5

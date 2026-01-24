@@ -2,6 +2,7 @@ import numpy as np
 from configs.cfg import CFG
 import torch.nn as nn
 import torch
+import torch.nn.functional as F
 from sklearn.metrics import r2_score
 
 def per_target_r2_score(y_true: np.ndarray, y_pred: np.ndarray):
@@ -127,25 +128,20 @@ class AdaptiveHuberLoss(nn.Module):
         
         return torch.mean(loss_quad + loss_lin)
 
-def weighted_biomass_loss(p_total, p_gdm, p_green, labels, deltas):
+def weighted_biomass_loss(p_total, p_gdm, p_green, p_clover, p_dead, labels, deltas):
     """
     Calculates the 5 individual MSE losses and returns their
     weighted sum, perfectly aligning with the R2 metric weights.
     """
-    # loss_fn = nn.HuberLoss(delta=15.0) if use_huber else nn.MSELoss()
-    loss_fn = AdaptiveHuberLoss(deltas)
-    # total = gdm + dead
-    # gdm = clover + green
-    # Calculate derived predictions
-    p_clover = torch.clamp(p_gdm - p_green, min=0)
-    p_dead   = torch.clamp(p_total - p_gdm, min=0)
+    # loss_fn = AdaptiveHuberLoss(deltas)
+    loss_fn = nn.MSELoss()
 
     # 1. Calculate the 5 individual MSE losses
-    loss_green = loss_fn(p_green.squeeze(), labels[:, 0],0) # Corresponds to Dry_Green_g
-    loss_dead  = loss_fn(p_dead.squeeze(),  labels[:, 1],1) # Corresponds to Dry_Dead_g
-    loss_clover = loss_fn(p_clover.squeeze(), labels[:, 2],2) # Corresponds to Dry_Clover_g
-    loss_gdm   = loss_fn(p_gdm.squeeze(),   labels[:, 3],3) # Corresponds to GDM_g
-    loss_total = loss_fn(p_total.squeeze(), labels[:, 4],4) # Corresponds to Dry_Total_g
+    loss_green = loss_fn(p_green.squeeze(), labels[:, 0]) # Corresponds to Dry_Green_g
+    loss_dead  = loss_fn(p_dead.squeeze(),  labels[:, 1]) # Corresponds to Dry_Dead_g
+    loss_clover = loss_fn(p_clover.squeeze(), labels[:, 2]) # Corresponds to Dry_Clover_g
+    loss_gdm   = loss_fn(p_gdm.squeeze(),   labels[:, 3]) # Corresponds to GDM_g
+    loss_total = loss_fn(p_total.squeeze(), labels[:, 4]) # Corresponds to Dry_Total_g
     
     # 2. Get the weights
     weights = CFG.R2_WEIGHTS
@@ -159,7 +155,22 @@ def weighted_biomass_loss(p_total, p_gdm, p_green, labels, deltas):
         loss_total  * weights[4]
     )
     
-    return weighted_loss_sum
+    cons_dead_positive = F.relu(p_gdm.squeeze() - p_total.squeeze()).mean()
+
+    # Constraint B: GDM must be >= Green + Clover
+    # The sum of the parts cannot exceed the whole.
+    sum_parts = p_green.squeeze() + p_clover.squeeze()
+    cons_parts_valid = F.relu(sum_parts - p_gdm.squeeze()).mean()
+    
+    # Constraint C: GDM >= Green (Implicitly covered by B, but adds stability)
+    cons_green_valid = F.relu(p_green.squeeze() - p_gdm.squeeze()).mean()
+
+    # --- 3. Combine ---
+    # We add a small scalar (e.g., 1.0 or 0.1) to weight the physics importance
+    physics_penalty = cons_dead_positive + cons_parts_valid + cons_green_valid
+    
+    # Total loss is Accuracy + Physics
+    return weighted_loss_sum + (2.0 * physics_penalty)
 
 def global_clip_loss(image_embeddings, all_text_anchors, global_indices, logit_scale):
     """

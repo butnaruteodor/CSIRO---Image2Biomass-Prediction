@@ -6,6 +6,7 @@ from torch.utils.data import Dataset, DataLoader
 import copy
 from datetime import datetime
 
+from dataset.preprocess_data import get_plant_neighbor_map
 from utils.eval import *
 from utils.utils import *
 from dataset.biomass_dataset import *
@@ -49,26 +50,26 @@ def train_epoch_base(model, loader, opt, scheduler, device, scaler, deltas):
     running = 0.0
 
     opt.zero_grad()
-    for i, (features, targets) in enumerate(tqdm(loader, desc='train', leave=False)):
-        features, targets = features.to(device, non_blocking=True), targets.to(device, non_blocking=True)
-        if np.random.rand() < 0.5: 
-            alpha = 0.8
-            lam = np.random.beta(alpha, alpha)
+    for i, (features, targets, n_feat, n_target) in enumerate(tqdm(loader, desc='train', leave=False)):
+        features, targets = features.to(device), targets.to(device)
+        n_feat, n_target = n_feat.to(device), n_target.to(device)
+        # if np.random.rand() < 0.5:
+        #     # Generate Lambda
+        #     alpha = 0.3 # Lower = more blending near edges, Higher = more blending near middle
+        #     lam = np.random.beta(alpha, alpha)
             
-            # 2. Shuffle indices to find "Partner" for every sample
-            batch_size = features.size(0)
-            index = torch.randperm(batch_size).to(device)
+        #     # --- CHOOSE YOUR METHOD HERE ---
+        #     # Option A: Slerp (Best for normalized embeddings)
+        #     features = slerp(lam, features, n_feat)
             
-            # 3. Create the Mixed Batch
-            # We blend Feature A with Feature B
-            features = slerp(lam, features, features[index])
-
-            # 4. Create the Mixed Targets
-            # We blend Label A with Label B (Works perfectly for regression!)
-            targets = lam * targets + (1 - lam) * targets[index]
+        #     # Option B: Linear (Simpler)
+        #     # features = lam * features + (1 - lam) * n_feat
+            
+        #     # Mix Targets (Always Linear for regression)
+        #     targets = lam * targets + (1 - lam) * n_target
         with autocast('cuda',dtype=torch.bfloat16):
-            (p_tot, p_gdm, p_green) = model(features)
-            loss_reg = weighted_biomass_loss(p_tot, p_gdm, p_green, targets, deltas)
+            (p_tot, p_gdm, p_green, p_clover, p_dead) = model(features)
+            loss_reg = weighted_biomass_loss(p_tot, p_gdm, p_green, p_clover, p_dead, targets, deltas)
             # loss_reg = weighted_biomass_log_loss(p_tot, p_gdm, p_green, lab)
             total_loss = loss_reg
         
@@ -134,9 +135,9 @@ def valid_epoch_base(model, loader, device, deltas):
     for (features, targets) in tqdm(loader, desc='valid', leave=False):
         features, targets = features.to(device, non_blocking=True), targets.to(device, non_blocking=True)
         with autocast('cuda',dtype=torch.bfloat16):
-            (p_tot, p_gdm, p_green) = model(features)
+            (p_tot, p_gdm, p_green, p_clover, p_dead) = model(features)
 
-            loss = weighted_biomass_loss(p_tot, p_gdm, p_green, targets, deltas)
+            loss = weighted_biomass_loss(p_tot, p_gdm, p_green, p_clover, p_dead, targets, deltas)
         running_loss += loss.item() * features.size(0)
 
         preds['total'].extend(p_tot.cpu().float().numpy().ravel())
@@ -309,14 +310,17 @@ def train_base(fold_dir, tr_df, val_df, model_id, model_state_dict=None, group_n
     deltas = calculate_deltas(train_labels_tensor)
 
     train_data = torch.load(f"{fold_dir}/train.pt")
-    val_data   = torch.load(f"{fold_dir}/val.pt")
+    val_data = torch.load(f"{fold_dir}/val.pt")
 
-    g=get_generator()
-    train_ds = torch.utils.data.TensorDataset(train_data['features'], train_data['targets'])
-    val_ds   = torch.utils.data.TensorDataset(val_data['features'], val_data['targets'])
-    
-    tr_loader = DataLoader(train_ds, batch_size=CFG.BATCH_SIZE, shuffle=True, num_workers=CFG.NUM_WORKERS, pin_memory=True, drop_last=True, worker_init_fn=seed_worker,generator=g) # Huge batch size!
-    val_loader   = DataLoader(val_ds, batch_size=CFG.BATCH_SIZE, shuffle=False, num_workers=CFG.NUM_WORKERS, pin_memory=True, drop_last=True, worker_init_fn=seed_worker,generator=g)
+    VIEWS_PER_PLANT = 20 # <--- DOUBLE CHECK THIS
+    neighbor_map = get_plant_neighbor_map(train_data['features'], views_per_plant=VIEWS_PER_PLANT)
+
+    train_ds = PairedDataset(train_data['features'], train_data['targets'], neighbor_map)
+    val_ds = torch.utils.data.TensorDataset(val_data['features'], val_data['targets']) 
+
+    g = get_generator()
+    tr_loader = DataLoader(train_ds, batch_size=CFG.BATCH_SIZE, shuffle=True, num_workers=CFG.NUM_WORKERS, pin_memory=True, drop_last=False, worker_init_fn=seed_worker,generator=g) # Huge batch size!
+    val_loader   = DataLoader(val_ds, batch_size=CFG.BATCH_SIZE, shuffle=False, num_workers=CFG.NUM_WORKERS, pin_memory=True, drop_last=False, worker_init_fn=seed_worker,generator=g)
     
     print("Building model...")
     model = BiomassSimpleMLP(2048)
@@ -328,7 +332,7 @@ def train_base(fold_dir, tr_df, val_df, model_id, model_state_dict=None, group_n
 
     warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
         optimizer,
-        start_factor=1e-2, # Start from a very small LR
+        start_factor=1e-3, # Start from a very small LR
         end_factor=1.0,
         total_iters=CFG.WARMUP_EPOCHS
     )

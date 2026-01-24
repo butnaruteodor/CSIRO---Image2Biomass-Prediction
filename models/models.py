@@ -14,6 +14,7 @@ class BiomassModelMLP(nn.Module):
             model_name, pretrained=False, num_classes=0)
         print(f"{CFG.MODEL_NAME} parameters: {sum(p.numel() for p in self.backbone.parameters() if p.requires_grad)}")
         self.load_pretrained()
+        torch.save(self.backbone.state_dict(),f"{CFG.MODEL_NAME}.pth")
 
         if checkpoint_path:
             # SIMPLE LOADING
@@ -99,45 +100,39 @@ class BiomassSimpleMLP(nn.Module):
     def __init__(self, image_feature_dim):
         super().__init__()
 
-        self.head_total = nn.Sequential(
-            nn.Linear(image_feature_dim, image_feature_dim//2), 
-            nn.GELU(),
-            nn.Dropout(0.3),
-            nn.Linear(image_feature_dim//2, image_feature_dim//4), 
-            nn.GELU(),
-            nn.Dropout(0.3),
-            nn.Linear(image_feature_dim//4, image_feature_dim//8), 
-            nn.GELU(),
-            nn.Dropout(0.3),
-            nn.Linear(image_feature_dim//8, 1)
-        )
-        self.head_ratios = nn.Sequential(
-            nn.Linear(image_feature_dim, image_feature_dim//2), 
-            nn.GELU(),
-            nn.Dropout(0.3),
-            nn.Linear(image_feature_dim//2, image_feature_dim//4), 
-            nn.GELU(),
-            nn.Dropout(0.3),
-            nn.Linear(image_feature_dim//4, image_feature_dim//8), 
-            nn.GELU(),
-            nn.Dropout(0.3),
-            nn.Linear(image_feature_dim//8, 2),
-            nn.Sigmoid() # Forces output between 0 and 1
-        )
+        self.head_total = self._create_head(image_feature_dim)
+        self.head_gdm = self._create_head(image_feature_dim)
+        self.head_clover = self._create_head(image_feature_dim)
+        self.head_green = self._create_head(image_feature_dim)
 
+    def _create_head(self, feature_dim):
+        return nn.Sequential(
+        nn.Linear(feature_dim, feature_dim//2), 
+        nn.GELU(),
+        nn.Dropout(0.3),
+        nn.Linear(feature_dim//2, feature_dim//4),
+        nn.GELU(),
+        nn.Dropout(0.3),
+        nn.Linear(feature_dim//4, 1)
+        )
     def forward(self, feats):
         p_total = F.softplus(self.head_total(feats))
+        p_gdm = F.softplus(self.head_gdm(feats))
+        p_clover = F.softplus(self.head_clover(feats))
+        p_green = F.softplus(self.head_green(feats))
+        p_dead = p_total - p_gdm
+        # preds = self.head_ratios(feats)
+        # r_dead, r_clover = preds.split(1, dim=1)
 
-        preds = self.head_ratios(feats)
-        r_dead, r_clover = preds.split(1, dim=1)
+        # p_dead  = p_total * r_dead
+        # p_clover  = p_total * r_clover
 
-        p_dead  = p_total * r_dead
-        p_clover  = p_total * r_clover
+        # p_gdm = p_total - p_dead
+        # p_green = p_gdm - p_clover
 
-        p_gdm = p_total - p_dead
-        p_green = p_gdm - p_clover
+        return (p_total, p_gdm, p_green, p_clover, p_dead)
         
-        return (p_total, p_gdm, p_green)
+        # return (p_total, p_gdm, p_green)
 
 def get_lora_model():
     print(f"Loading OpenCLIP model: {CFG.CLIP_NAME}...")

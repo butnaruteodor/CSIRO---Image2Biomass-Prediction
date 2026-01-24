@@ -185,3 +185,24 @@ class BiomassDatasetClip(Dataset):
             "text": self.texts[idx],
             "index": idx
         }
+
+class PairedDataset(torch.utils.data.Dataset):
+    def __init__(self, features, targets, neighbor_map):
+        self.features = features
+        self.targets = targets
+        self.neighbor_map = neighbor_map
+
+    def __len__(self):
+        return len(self.features)
+
+    def __getitem__(self, idx):
+        # 1. Get Main Sample
+        feat = self.features[idx]
+        target = self.targets[idx]
+        
+        # 2. Get Its Pre-Calculated Neighbor
+        n_idx = self.neighbor_map[idx]
+        n_feat = self.features[n_idx]
+        n_target = self.targets[n_idx]
+        
+        return feat, target, n_feat, n_target
