@@ -117,9 +117,13 @@ class BiomassSimpleMLP(nn.Module):
         )
     def forward(self, feats):
         p_total = F.softplus(self.head_total(feats))
-        p_gdm = F.softplus(self.head_gdm(feats))
+        r_gdm = F.softplus(self.head_gdm(feats))
         p_clover = F.softplus(self.head_clover(feats))
-        p_green = F.softplus(self.head_green(feats))
+        r_green = F.softplus(self.head_green(feats))
+
+        
+        p_gdm = p_total * r_gdm
+        p_green = p_total * r_green
         p_dead = p_total - p_gdm
         # preds = self.head_ratios(feats)
         # r_dead, r_clover = preds.split(1, dim=1)

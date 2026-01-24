@@ -52,20 +52,21 @@ def train_epoch_base(model, loader, opt, scheduler, device, scaler, deltas, epoc
     for i, (features, targets, n_feat, n_target) in enumerate(tqdm(loader, desc='train', leave=False)):
         features, targets = features.to(device), targets.to(device)
         n_feat, n_target = n_feat.to(device), n_target.to(device)
-        # if np.random.rand() < 0.5:
-        #     # Generate Lambda
-        #     alpha = 0.3 # Lower = more blending near edges, Higher = more blending near middle
-        #     lam = np.random.beta(alpha, alpha)
+        if np.random.rand() < 0.5: 
+            alpha = 0.8
+            lam = np.random.beta(alpha, alpha)
             
-        #     # --- CHOOSE YOUR METHOD HERE ---
-        #     # Option A: Slerp (Best for normalized embeddings)
-        #     features = slerp(lam, features, n_feat)
+            # 2. Shuffle indices to find "Partner" for every sample
+            batch_size = features.size(0)
+            index = torch.randperm(batch_size).to(device)
             
-        #     # Option B: Linear (Simpler)
-        #     # features = lam * features + (1 - lam) * n_feat
-            
-        #     # Mix Targets (Always Linear for regression)
-        #     targets = lam * targets + (1 - lam) * n_target
+            # 3. Create the Mixed Batch
+            # We blend Feature A with Feature B
+            features = slerp(lam, features, features[index])
+
+            # 4. Create the Mixed Targets
+            # We blend Label A with Label B (Works perfectly for regression!)
+            targets = lam * targets + (1 - lam) * targets[index]
 
         epoch_target_weights = get_interpolated_weights(
             current_epoch=epoch_num,
