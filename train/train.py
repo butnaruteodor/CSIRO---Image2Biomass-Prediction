@@ -45,10 +45,9 @@ def train_epoch_clip(model, loader, opt, scheduler, device, scaler, text_anchors
     return running / len(loader)
 
 
-def train_epoch_base(model, loader, opt, scheduler, device, scaler, deltas):
+def train_epoch_base(model, loader, opt, scheduler, device, scaler, deltas, epoch_num):
     model.train()
     running = 0.0
-
     opt.zero_grad()
     for i, (features, targets, n_feat, n_target) in enumerate(tqdm(loader, desc='train', leave=False)):
         features, targets = features.to(device), targets.to(device)
@@ -67,9 +66,17 @@ def train_epoch_base(model, loader, opt, scheduler, device, scaler, deltas):
             
         #     # Mix Targets (Always Linear for regression)
         #     targets = lam * targets + (1 - lam) * n_target
+
+        epoch_target_weights = get_interpolated_weights(
+            current_epoch=epoch_num,
+            total_epochs=CFG.EPOCHS,  # or a shorter duration if you want faster transition
+            start_weights=CFG.R2_WEIGHTS_TRAIN,
+            end_weights=CFG.R2_WEIGHTS_VAL
+            ).to(device)
+        constraint_weight = get_constraint_weight(epoch_num, start_epoch=3,ramp_epochs=10,max_weight=1.0)
         with autocast('cuda',dtype=torch.bfloat16):
             (p_tot, p_gdm, p_green, p_clover, p_dead) = model(features)
-            loss_reg = weighted_biomass_loss(p_tot, p_gdm, p_green, p_clover, p_dead, targets, deltas)
+            loss_reg = weighted_biomass_loss(p_tot, p_gdm, p_green, p_clover, p_dead, targets, deltas, constraint_weight, epoch_target_weights)
             # loss_reg = weighted_biomass_log_loss(p_tot, p_gdm, p_green, lab)
             total_loss = loss_reg
         
@@ -137,7 +144,7 @@ def valid_epoch_base(model, loader, device, deltas):
         with autocast('cuda',dtype=torch.bfloat16):
             (p_tot, p_gdm, p_green, p_clover, p_dead) = model(features)
 
-            loss = weighted_biomass_loss(p_tot, p_gdm, p_green, p_clover, p_dead, targets, deltas)
+            loss = weighted_biomass_loss(p_tot, p_gdm, p_green, p_clover, p_dead, targets, deltas, 0, CFG.R2_WEIGHTS_VAL)
         running_loss += loss.item() * features.size(0)
 
         preds['total'].extend(p_tot.cpu().float().numpy().ravel())
@@ -353,7 +360,7 @@ def train_base(fold_dir, tr_df, val_df, model_id, model_state_dict=None, group_n
     patience = 0
     scaler = torch.amp.GradScaler('cuda')
     for epoch in range(1, CFG.EPOCHS+1):
-        tr_loss = train_epoch_base(model, tr_loader, optimizer, scheduler, CFG.DEVICE, scaler, deltas)
+        tr_loss = train_epoch_base(model, tr_loader, optimizer, scheduler, CFG.DEVICE, scaler, deltas, epoch)
         val_loss, val_r2, per_target_r2 = valid_epoch_base(model, val_loader, CFG.DEVICE, deltas)
         test_loss, test_val_r2=0,0
 

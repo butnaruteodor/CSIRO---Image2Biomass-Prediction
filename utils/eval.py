@@ -34,7 +34,7 @@ def global_weighted_r2_score(y_true: np.ndarray, y_pred: np.ndarray):
     y_true, y_pred: shape (N, 5)
     weights: [0.1, 0.1, 0.1, 0.2, 0.5] (from CFG)
     """
-    weights_matrix = np.tile(CFG.R2_WEIGHTS, (y_true.shape[0], 1))
+    weights_matrix = np.tile(CFG.R2_WEIGHTS_VAL, (y_true.shape[0], 1))
     # y_bar_w = (sum(w_j * y_j)) / (sum(w_j))
     weighted_sum = np.sum(weights_matrix * y_true)
     total_weight = np.sum(weights_matrix)
@@ -128,31 +128,68 @@ class AdaptiveHuberLoss(nn.Module):
         
         return torch.mean(loss_quad + loss_lin)
 
-def weighted_biomass_loss(p_total, p_gdm, p_green, p_clover, p_dead, labels, deltas):
+def get_constraint_weight(current_epoch, start_epoch=5, ramp_epochs=10, max_weight=1.0):
+    """
+    Returns 0.0 until start_epoch.
+    Then linearly increases to max_weight over ramp_epochs.
+    """
+    if current_epoch < start_epoch:
+        return 0.0
+    
+    # Calculate progress (0.0 to 1.0)
+    progress = (current_epoch - start_epoch) / ramp_epochs
+    
+    # Clamp between 0.0 and 1.0 and scale by max_weight
+    current_weight = min(max(progress, 0.0), 1.0) * max_weight
+    
+    return current_weight
+
+def get_interpolated_weights(current_epoch, total_epochs, start_weights, end_weights):
+    """
+    Interpolates linearly from start_weights to end_weights.
+    
+    Args:
+        current_epoch (int): The current epoch number.
+        total_epochs (int): When to finish the transition (usually CFG.epochs).
+        start_weights (list/array): The initial weights (e.g., [1, 1, 1, 1, 1]).
+        end_weights (list/array): The final competition weights.
+    """
+    # Ensure inputs are tensors or arrays
+    w_start = np.array(start_weights, dtype=np.float32)
+    w_end   = np.array(end_weights, dtype=np.float32)
+    
+    # Calculate progress alpha (0.0 -> 1.0)
+    # We clip it to 1.0 just in case current_epoch > total_epochs
+    alpha = min(current_epoch / total_epochs, 1.0)
+    
+    # Linear Interpolation Formula: w = start + alpha * (end - start)
+    w_current = w_start + alpha * (w_end - w_start)
+    
+    # Return as a tensor on the correct device (assuming you have 'device' defined globally or pass it)
+    return torch.tensor(w_current, dtype=torch.float32)
+
+def weighted_biomass_loss(p_total, p_gdm, p_green, p_clover, p_dead, labels, deltas, constr_weight, target_weights):
     """
     Calculates the 5 individual MSE losses and returns their
     weighted sum, perfectly aligning with the R2 metric weights.
     """
-    # loss_fn = AdaptiveHuberLoss(deltas)
+    # loss_fn_huber = AdaptiveHuberLoss(deltas)
     loss_fn = nn.MSELoss()
 
     # 1. Calculate the 5 individual MSE losses
     loss_green = loss_fn(p_green.squeeze(), labels[:, 0]) # Corresponds to Dry_Green_g
-    loss_dead  = loss_fn(p_dead.squeeze(),  labels[:, 1]) # Corresponds to Dry_Dead_g
+    loss_dead  = F.smooth_l1_loss(p_dead.squeeze(),  labels[:, 1], beta=3.0) # Corresponds to Dry_Dead_g
     loss_clover = loss_fn(p_clover.squeeze(), labels[:, 2]) # Corresponds to Dry_Clover_g
     loss_gdm   = loss_fn(p_gdm.squeeze(),   labels[:, 3]) # Corresponds to GDM_g
     loss_total = loss_fn(p_total.squeeze(), labels[:, 4]) # Corresponds to Dry_Total_g
     
-    # 2. Get the weights
-    weights = CFG.R2_WEIGHTS
-    
     # 3. Apply the weights to their corresponding losses
     weighted_loss_sum = (
-        loss_green  * weights[0] +
-        loss_dead   * weights[1] +
-        loss_clover * weights[2] +
-        loss_gdm    * weights[3] +
-        loss_total  * weights[4]
+        loss_green  * target_weights[0] +
+        loss_dead   * target_weights[1] +
+        loss_clover * target_weights[2] +
+        loss_gdm    * target_weights[3] +
+        loss_total  * target_weights[4]
     )
     
     cons_dead_positive = F.relu(p_gdm.squeeze() - p_total.squeeze()).mean()
@@ -170,7 +207,7 @@ def weighted_biomass_loss(p_total, p_gdm, p_green, p_clover, p_dead, labels, del
     physics_penalty = cons_dead_positive + cons_parts_valid + cons_green_valid
     
     # Total loss is Accuracy + Physics
-    return weighted_loss_sum + (2.0 * physics_penalty)
+    return weighted_loss_sum + (constr_weight * physics_penalty)
 
 def global_clip_loss(image_embeddings, all_text_anchors, global_indices, logit_scale):
     """
@@ -251,7 +288,7 @@ def weighted_biomass_log_loss(p_total_log, p_gdm_log, p_green_log, labels_log, u
     loss_dead   = loss_fn_linear(p_dead_real,   t_dead_real)
 
     # 5. Final Combination
-    weights = CFG.R2_WEIGHTS
+    weights = CFG.R2_WEIGHTS_TRAIN
     
     weighted_loss_sum = (
         loss_green  * weights[0] +

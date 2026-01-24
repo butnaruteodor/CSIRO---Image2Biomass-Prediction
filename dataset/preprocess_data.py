@@ -31,7 +31,7 @@ def check_splits(splitter, df):
         val_mean_clover_dry = val_fold['Dry_Clover_g'].mean()
         val_mean_gdm = val_fold['GDM_g'].mean()
 
-        val_mean_weighted = CFG.R2_WEIGHTS[4] * val_mean_total_dry + CFG.R2_WEIGHTS[0] * val_mean_green_dry + CFG.R2_WEIGHTS[1] * val_mean_dead_dry + CFG.R2_WEIGHTS[2] * val_mean_clover_dry + CFG.R2_WEIGHTS[3] * val_mean_gdm
+        val_mean_weighted = CFG.R2_WEIGHTS_VAL[4] * val_mean_total_dry + CFG.R2_WEIGHTS_VAL[0] * val_mean_green_dry + CFG.R2_WEIGHTS_VAL[1] * val_mean_dead_dry + CFG.R2_WEIGHTS_VAL[2] * val_mean_clover_dry + CFG.R2_WEIGHTS_VAL[3] * val_mean_gdm
         
         print(f"{fold+1:<5} | {n_train:<12} | {n_val:<10} | {ratio:<6.2f}% | Dry_Total_g:{val_mean_total_dry:<8.4f} | Dry_Green_g:{val_mean_green_dry:<8.4f} | Dry_Dead_g:{val_mean_dead_dry:<8.4f} | Dry_Clover_g:{val_mean_clover_dry:<8.4f} | GDM_g:{val_mean_gdm:<8.4f}  | Weighted_g:{val_mean_weighted:<8.4f}")
         

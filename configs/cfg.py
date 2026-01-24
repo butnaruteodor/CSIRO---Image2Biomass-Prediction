@@ -10,7 +10,7 @@ class CFG:
 
     # TIMM
     MODEL_NAME = 'vit_large_patch16_dinov3'
-    PATIENCE     = 10
+    PATIENCE     = 20
     
     # CLIP
     CLIP_NAME    = 'convnext_base_w'
@@ -27,7 +27,7 @@ class CFG:
     BATCH_SIZE   = 64
     GRAD_ACC     = 1    # effective batch = 8
     NUM_WORKERS  = 4
-    EPOCHS       = 100
+    EPOCHS       = 60
     LR           = 1e-3
     WD           = 0.01 #1e-2 convnext
     WARMUP_EPOCHS = 4
@@ -39,8 +39,8 @@ class CFG:
     TARGET_COLS    = ['Dry_Total_g', 'GDM_g', 'Dry_Green_g']
     DERIVED_COLS   = ['Dry_Clover_g', 'Dry_Dead_g']
     ALL_TARGET_COLS = ['Dry_Green_g','Dry_Dead_g','Dry_Clover_g','GDM_g','Dry_Total_g']
-    # R2_WEIGHTS     = np.array([0.1, 0.1, 0.1, 0.2, 0.5])  # matches metric
-    R2_WEIGHTS     = np.array([1.0, 1.0, 1.0, 1.0, 1.0])  # matches metric
+    R2_WEIGHTS_VAL     = np.array([0.1, 0.1, 0.1, 0.2, 0.5])  # matches metric
+    R2_WEIGHTS_TRAIN     = np.array([1.0, 1.0, 1.0, 1.0, 1.0])  # matches metric
     W_SPECIES = 0.25
     W_STATE = 0.25
     W_CONT = 0.5
