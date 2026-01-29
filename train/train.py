@@ -1,10 +1,12 @@
 import gc
+from catboost import CatBoostRegressor
 from torch.amp import autocast
 import torch
 from tqdm import tqdm
 from torch.utils.data import Dataset, DataLoader
 import copy
 from datetime import datetime
+import optuna
 
 from dataset.preprocess_data import get_plant_neighbor_map
 from utils.eval import *
@@ -52,21 +54,21 @@ def train_epoch_base(model, loader, opt, scheduler, device, scaler, deltas, epoc
     for i, (features, targets, n_feat, n_target) in enumerate(tqdm(loader, desc='train', leave=False)):
         features, targets = features.to(device), targets.to(device)
         n_feat, n_target = n_feat.to(device), n_target.to(device)
-        if np.random.rand() < 0.5: 
-            alpha = 0.8
-            lam = np.random.beta(alpha, alpha)
+        # if np.random.rand() < 0.5: 
+        #     alpha = 0.8
+        #     lam = np.random.beta(alpha, alpha)
             
-            # 2. Shuffle indices to find "Partner" for every sample
-            batch_size = features.size(0)
-            index = torch.randperm(batch_size).to(device)
+        #     # 2. Shuffle indices to find "Partner" for every sample
+        #     batch_size = features.size(0)
+        #     index = torch.randperm(batch_size).to(device)
             
-            # 3. Create the Mixed Batch
-            # We blend Feature A with Feature B
-            features = slerp(lam, features, features[index])
+        #     # 3. Create the Mixed Batch
+        #     # We blend Feature A with Feature B
+        #     features = slerp(lam, features, features[index])
 
-            # 4. Create the Mixed Targets
-            # We blend Label A with Label B (Works perfectly for regression!)
-            targets = lam * targets + (1 - lam) * targets[index]
+        #     # 4. Create the Mixed Targets
+        #     # We blend Label A with Label B (Works perfectly for regression!)
+        #     targets = lam * targets + (1 - lam) * targets[index]
 
         epoch_target_weights = get_interpolated_weights(
             current_epoch=epoch_num,
@@ -331,7 +333,7 @@ def train_base(fold_dir, tr_df, val_df, model_id, model_state_dict=None, group_n
     val_loader   = DataLoader(val_ds, batch_size=CFG.BATCH_SIZE, shuffle=False, num_workers=CFG.NUM_WORKERS, pin_memory=True, drop_last=False, worker_init_fn=seed_worker,generator=g)
     
     print("Building model...")
-    model = BiomassSimpleMLP(2048)
+    model = BiomassOneLayer(2048)
     model = model.to(CFG.DEVICE)
     # model = nn.DataParallel(model)
     parameters = model.parameters()
@@ -405,6 +407,247 @@ def train_base(fold_dir, tr_df, val_df, model_id, model_state_dict=None, group_n
     return best_r2
 
 
+def train_tree(fold_dir, fold, verbose=False):
+    print(f"Loading data from {fold_dir}...")
+    train_data = torch.load(os.path.join(fold_dir, "train.pt"), map_location='cpu')
+    val_data   = torch.load(os.path.join(fold_dir, "val.pt"),   map_location='cpu')
+
+    # 1. Step slicing to get Original Images only
+    # Ensure your data is structured [Orig, Aug1, Aug2...] 
+    # If not sure, this is dangerous!
+    step_size = 20 
+    X_train = train_data['features'][::step_size].numpy()
+    y_train = train_data['targets'][::step_size].numpy()
+    
+    X_val   = val_data['features'].numpy()
+    y_val   = val_data['targets'].numpy()
+
+    # 2. Define Best Parameters for each Target
+    # You can tweak these manually or use Optuna to find them
+    MODEL_PARAMS = {
+        'Total':  {'depth': 6, 'l2_leaf_reg': 3, 'learning_rate': 0.02, 'iterations': 3000},
+        'Green':  {'depth': 6, 'l2_leaf_reg': 3, 'learning_rate': 0.02, 'iterations': 3000},
+        'Clover': {'depth': 4, 'l2_leaf_reg': 7, 'learning_rate': 0.01, 'iterations': 2000}, # Sparse -> Regularize more!
+        'GDM':    {'depth': 4, 'l2_leaf_reg': 7, 'learning_rate': 0.01, 'iterations': 2000}, # Sparse -> Regularize more!
+    }
+
+    targets_to_train = {
+        'Green': 0,
+        'Clover': 2,
+        'GDM': 3,
+        'Total': 4
+    }
+    
+    # def objective(trial):
+    #     # 1. Suggest params
+    #     param = {
+    #         'iterations': 2000,
+    #         'depth': trial.suggest_int('depth', 3, 8),
+    #         'learning_rate': trial.suggest_float('learning_rate', 0.005, 0.1, log=True),
+    #         'l2_leaf_reg': trial.suggest_float('l2_leaf_reg', 1, 10),
+    #         'bagging_temperature': trial.suggest_float('bagging_temperature', 0.0, 1.0),
+    #         'task_type': 'CPU',
+    #         # 'used_ram_limit': '4gb',
+    #         'verbose': 0
+    #     }
+        
+    #     # 2. Setup Data (Use only Fold 0 for speed)
+    #     # ... load X_train, y_train (for Clover column only) ...
+        
+    #     model = CatBoostRegressor(**param)
+    #     model.fit(X_train, y_train[:, col_idx], eval_set=(X_val, y_val[:, col_idx]), early_stopping_rounds=50)
+        
+    #     return model.get_best_score()['validation']['RMSE']
+
+    val_preds = np.zeros_like(y_val)
+    
+    # --- 3. Train Loop ---
+    for name, col_idx in targets_to_train.items():
+        if verbose:
+            print(f"  Training {name} model...")
+            
+        # Get specific params or default to generic ones
+        params = MODEL_PARAMS.get(name, {'depth': 6, 'learning_rate': 0.01})
+            
+        model = CatBoostRegressor(
+            loss_function='RMSE',
+            eval_metric='RMSE',
+            early_stopping_rounds=100,
+            verbose=0,
+            allow_writing_files=False,
+            task_type="GPU", # Use GPU
+            **params # Unpack the target-specific params
+        )
+        
+        model.fit(
+            X_train, y_train[:, col_idx],
+            eval_set=(X_val, y_val[:, col_idx]),
+            use_best_model=True
+        )
+        filename = f"catboost_{name.lower()}_fold{fold}.cbm"
+        
+        # 2. Define the full path
+        # You can save this in the fold directory or your main models directory
+        save_path = os.path.join(fold_dir, filename)
+        
+        # 3. Save the model
+        model.save_model(save_path)
+        
+        # study = optuna.create_study(direction='minimize')
+        # study.optimize(objective, n_trials=20)
+        # print(study.best_params)
+
+        # Predict
+        val_preds[:, col_idx] = model.predict(X_val)
+        
+        best_rmse = model.get_best_score()['validation']['RMSE']
+        print(f"  {name:<6} | RMSE: {best_rmse:.3f} | Params: D={params['depth']}, LR={params['learning_rate']}")
+
+    # --- 4. Physics & Derivation (CORRECTED) ---
+    
+    # A. Correct Physics: Dead = Total - (Green + Clover + GDM)
+    # Your previous code only subtracted GDM. You must subtract ALL living parts.
+    val_preds[:, 1] = val_preds[:, 4] - val_preds[:, 3]
+    
+    # B. Sanity Check: If components > Total, scale them down?
+    # Or just clamp Dead to 0 (which implicitly says Total was underestimated)
+    val_preds[:, 1] = np.maximum(val_preds[:, 1], 0)
+    
+    # C. Global Clamp (Crucial for score)
+    val_preds = np.maximum(val_preds, 0)
+    
+    final_score = global_weighted_r2_score(y_val, val_preds)
+    print(f"Fold {fold} Result: Weighted R2 = {final_score:.5f}")
+    
+    return final_score
+
+import joblib  # For saving the model
+from sklearn.linear_model import Ridge
+from sklearn.kernel_ridge import KernelRidge
+from sklearn.model_selection import GridSearchCV
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
+
+def train_ridge(all_embeddings, all_targets, save_path="ridge_models.pkl"):
+    print(f"Training Ridge on full dataset: {all_embeddings.shape}")
+    
+    target_map = {0: 'Green', 2: 'Clover', 3: 'GDM', 4: 'Total'}
+    final_models = {}
+    
+    # Define Pipeline
+    pipe = Pipeline([
+        ('scaler', StandardScaler()),
+        ('krr', KernelRidge(kernel='rbf'))
+    ])
+
+    # Parameters
+    param_grid = {
+        "krr__alpha": [0.001, 0.005, 0.01, 0.1, 1.0, 10.0],
+        "krr__gamma": [0.0001, 0.005, 0.001, 0.01, 0.1, None] 
+    }
+    
+    # DEFINE MULTIPLE SCORERS
+    # We want to see R2, but we want to optimize (refit) based on RMSE.
+    scorers = {
+        'RMSE': 'neg_root_mean_squared_error',
+        'R2': 'r2'
+    }
+
+    for col_idx, name in target_map.items():
+        print(f"Fitting {name} with Scaled Kernel Ridge...")
+        
+        # refit='RMSE' means: "Find the params that give the best RMSE, and fit the final model using those."
+        clf = GridSearchCV(
+            pipe, 
+            param_grid, 
+            cv=5, 
+            scoring=scorers, 
+            refit='RMSE',
+            n_jobs=-1  # Use all CPU cores for speed
+        )
+        
+        clf.fit(all_embeddings, all_targets[:, col_idx])
+        
+        final_models[name] = clf.best_estimator_
+        
+        # --- EXTRACT SCORES ---
+        # Get the index of the best parameters
+        best_idx = clf.best_index_
+        
+        # Extract the specific scores for that index
+        best_rmse = -clf.cv_results_['mean_test_RMSE'][best_idx]
+        best_r2   = clf.cv_results_['mean_test_R2'][best_idx]
+        
+        print(f"  > Best RMSE: {best_rmse:.4f} | Best R2: {best_r2:.4f}")
+        print(f"  > Params: {clf.best_params_}")
+
+    print(f"Saving models to {save_path}...")
+    joblib.dump(final_models, save_path)
+    
+    return final_models
+
+from sklearn.neighbors import KNeighborsRegressor
+import joblib
+
+def train_knn(fold_dir, fold, verbose=False):
+    if verbose:
+        print(f"  🧠 Training KNN (Fold {fold})...")
+
+    # 1. Load Data
+    train_data = torch.load(os.path.join(fold_dir, "train.pt"), map_location='cpu')
+    val_data   = torch.load(os.path.join(fold_dir, "val.pt"),   map_location='cpu')
+
+    # Convert to Numpy
+    # Step size 1 = Use ALL data for KNN (It needs dense data to work well)
+    X_train = train_data['features'].numpy()
+    y_train = train_data['targets'].numpy()
+    
+    X_val   = val_data['features'].numpy()
+    y_val   = val_data['targets'].numpy()
+
+    # 2. Select Targets: Green(0), Clover(2), GDM(3), Total(4)
+    # We skip Dead(1) because we derive it.
+    target_cols = [0, 2, 3, 4]
+    y_train_sub = y_train[:, target_cols]
+
+    # 3. Train KNN
+    # metric='cosine' is crucial for Deep Learning embeddings
+    # n_neighbors=30 is a robust balance for 2048-dim vectors
+    model = KNeighborsRegressor(n_neighbors=40, weights='distance', metric='cosine', n_jobs=-1)
+    model.fit(X_train, y_train_sub)
+
+    # 4. Predict on Validation
+    val_preds_raw = model.predict(X_val)
+    
+    # 5. Reconstruct the full 5-column format
+    # Shape: (N_val, 5) -> [Green, Dead, Clover, GDM, Total]
+    val_preds = np.zeros_like(y_val)
+    
+    val_preds[:, 0] = val_preds_raw[:, 0] # Green
+    val_preds[:, 2] = val_preds_raw[:, 1] # Clover
+    val_preds[:, 3] = val_preds_raw[:, 2] # GDM
+    val_preds[:, 4] = val_preds_raw[:, 3] # Total
+    
+    # Derive Dead: Total - (Green + Clover + GDM)
+    val_preds[:, 1] = val_preds[:, 4] - val_preds[:, 3]
+    print(val_preds)
+    
+    # 6. Physics Clamp (Crucial)
+    # val_preds = np.maximum(val_preds, 0)
+    
+    # 7. Score
+    score = global_weighted_r2_score(y_val, val_preds)
+    
+    if verbose:
+        print(f"  ✅ KNN Fold {fold} Score: {score:.5f}")
+
+    # 8. SAVE Predictions and Model
+    # Saving predictions is vital for your ensemble weight search later
+    np.save(os.path.join(fold_dir, f"val_preds_knn_fold{fold}.npy"), val_preds)
+    joblib.dump(model, os.path.join(fold_dir, f"knn_model_fold{fold}.pkl"))
+    
+    return score
+
 @torch.no_grad()
 def get_predictions(model, loader, device):
     model.eval()
@@ -445,3 +688,4 @@ def get_predictions(model, loader, device):
     ], axis=1)
 
     return pred_all, true_labels
+

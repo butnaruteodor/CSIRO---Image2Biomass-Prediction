@@ -206,3 +206,75 @@ class PairedDataset(torch.utils.data.Dataset):
         n_target = self.targets[n_idx]
         
         return feat, target, n_feat, n_target
+    
+def get_full_ridge_dataset(splitter, df_wide, fold_root_dir):
+    """
+    Constructs X_all (Mean Embeddings) and y_all for Ridge Regression.
+    """
+    N_total = len(df_wide)
+    
+    # Initialize placeholders
+    # We will detect embedding dimension dynamically from the first file loaded
+    X_all = None 
+    y_all = np.zeros((N_total, 5))
+    
+    print(f"Building Ridge dataset from: {fold_root_dir}")
+
+    # Convert generator to list so we can index neighbor folds
+    splits = list(splitter)
+    
+    for current_fold_idx in range(len(splits)):
+        # 1. Identify which images belong to this fold's validation set
+        _, target_img_indices = splits[current_fold_idx]
+        
+        # 2. Find where these images are used as TRAINING data (the next fold)
+        # Fold 1's validation images are inside Fold 2's training file
+        neighbor_fold_idx = (current_fold_idx + 1) % len(splits)
+        neighbor_train_indices, _ = splits[neighbor_fold_idx]
+        
+        # 3. Load that neighbor's training file (contains the augmentations we need)
+        neighbor_path = os.path.join(fold_root_dir, f"fold_{neighbor_fold_idx + 1}", "train.pt")
+        data = torch.load(neighbor_path, map_location='cpu')
+        
+        # --- FIRST RUN SETUP ---
+        if X_all is None:
+            # Detect embedding dimension (e.g., 512, 768, 1024)
+            # data['features'] is (N_train * 20, Dim)
+            emb_dim = data['features'].shape[1]
+            X_all = np.zeros((N_total, emb_dim), dtype=np.float32)
+            print(f"  > Detected Embedding Dimension: {emb_dim}")
+
+        # 4. Filter: We need to grab only the rows corresponding to 'target_img_indices'
+        # Reshape to (N_train, 20, Dim)
+        n_train_imgs = len(neighbor_train_indices)
+        features_reshaped = data['features'].view(n_train_imgs, 20, -1)
+        targets_reshaped  = data['targets'].view(n_train_imgs, 20, 5)
+        
+        # Find position of our target images inside the neighbor file
+        # This matches the Real Index (from df) to the Tensor Index
+        mask = np.isin(neighbor_train_indices, target_img_indices)
+        positions = np.where(mask)[0]
+        
+        # 5. Compute Mean & Fill X_all
+        # Select the specific images -> (N_subset, 20, Dim)
+        subset_feats = features_reshaped[positions]
+        subset_targets = targets_reshaped[positions]
+        
+        # Calculate Mean Embedding
+        # mean_feats = subset_feats.mean(dim=1).numpy()
+        single_view_feats = subset_feats[:, 0, :].numpy()
+
+        # # Targets are identical across augmentations, take 0th
+        clean_targets = subset_targets[:, 0, :].numpy()
+        
+        
+        # Map back to global X_all using the REAL dataframe indices
+        # neighbor_train_indices[positions] gives the actual image IDs (e.g., 5, 120, 300...)
+        real_indices = neighbor_train_indices[positions]
+        
+        X_all[real_indices] = single_view_feats
+        y_all[real_indices] = clean_targets
+        
+        print(f"  > Fold {current_fold_idx+1}: Extracted {len(real_indices)} images from Fold {neighbor_fold_idx+1}")
+
+    return X_all, y_all

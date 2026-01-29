@@ -117,26 +117,34 @@ class BiomassSimpleMLP(nn.Module):
         )
     def forward(self, feats):
         p_total = F.softplus(self.head_total(feats))
-        r_gdm = F.softplus(self.head_gdm(feats))
+        p_gdm = F.softplus(self.head_gdm(feats))
         p_clover = F.softplus(self.head_clover(feats))
-        r_green = F.softplus(self.head_green(feats))
-
-        
-        p_gdm = p_total * r_gdm
-        p_green = p_total * r_green
+        p_green = F.softplus(self.head_green(feats))
         p_dead = p_total - p_gdm
-        # preds = self.head_ratios(feats)
-        # r_dead, r_clover = preds.split(1, dim=1)
-
-        # p_dead  = p_total * r_dead
-        # p_clover  = p_total * r_clover
-
-        # p_gdm = p_total - p_dead
-        # p_green = p_gdm - p_clover
 
         return (p_total, p_gdm, p_green, p_clover, p_dead)
-        
-        # return (p_total, p_gdm, p_green)
+
+class BiomassOneLayer(nn.Module):
+    def __init__(self, image_feature_dim):
+        super().__init__()
+
+        self.head_total = self._create_head(image_feature_dim)
+        self.head_gdm = self._create_head(image_feature_dim)
+        self.head_clover = self._create_head(image_feature_dim)
+        self.head_green = self._create_head(image_feature_dim)
+
+    def _create_head(self, feature_dim):
+        return nn.Linear(feature_dim, 1)
+
+    def forward(self, feats):
+        p_total = F.softplus(self.head_total(feats))
+        p_gdm = F.softplus(self.head_gdm(feats))
+        p_clover = F.softplus(self.head_clover(feats))
+        p_green = F.softplus(self.head_green(feats))
+
+        p_dead = p_total - p_gdm
+
+        return (p_total, p_gdm, p_green, p_clover, p_dead)
 
 def get_lora_model():
     print(f"Loading OpenCLIP model: {CFG.CLIP_NAME}...")
