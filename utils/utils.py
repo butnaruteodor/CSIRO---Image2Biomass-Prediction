@@ -1,6 +1,6 @@
 import torch
-import open_clip
-from peft import PeftModel
+# import open_clip
+# from peft import PeftModel
 from collections import OrderedDict
 from configs.cfg import CFG
 import numpy as np

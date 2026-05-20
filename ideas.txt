@@ -1,7 +1,0 @@
-Using the tabular metadata - learned weights for auxiliary task, gradient projection, another model trained on the tabular
-dino + catboost https://www.kaggle.com/competitions/planttraits2024/writeups/aleksandr-korotaevskiy-9th-place-solution-dinov2-c
-
-Info:
-Applying transform on big image then splitting decreases perf: 0.49850+-0.15532 => 0.49575+-0.15545
-Applying spatial transform on big image then photometric on splited increases performance from the previous way
-0.3 saturation lowers cv

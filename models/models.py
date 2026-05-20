@@ -1,8 +1,8 @@
 import torch, torch.nn as nn
 import timm,os
 from configs.cfg import CFG
-import open_clip
-from peft import LoraConfig, get_peft_model
+# import open_clip
+# from peft import LoraConfig, get_peft_model
 import torch.nn.functional as F
 
 class BiomassModelMLP(nn.Module):
