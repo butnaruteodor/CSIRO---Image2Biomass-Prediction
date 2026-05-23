@@ -29,29 +29,23 @@ class BiomassModelMLP(nn.Module):
         # We have TWO image feature streams (left + right)
         image_feature_dim = nf * 2
 
-        self.head_total = nn.Sequential(
-            nn.Linear(image_feature_dim, image_feature_dim//2), 
-            nn.GELU(),
-            nn.Dropout(0.3),
-            nn.Linear(image_feature_dim//2, image_feature_dim//4), 
-            nn.GELU(),
-            nn.Dropout(0.3),
-            nn.Linear(image_feature_dim//4, 1)
-        )
-        self.head_ratios = nn.Sequential(
-            nn.Linear(image_feature_dim, image_feature_dim//2), 
-            nn.GELU(),
-            nn.Dropout(0.3),
-            nn.Linear(image_feature_dim//2, image_feature_dim//4), 
-            nn.GELU(),
-            nn.Dropout(0.3),
-            nn.Linear(image_feature_dim//4, 2),
-            nn.Sigmoid() # Forces output between 0 and 1
-        )
+        self.head_total = self._create_head(image_feature_dim)
+        self.head_gdm = self._create_head(image_feature_dim)
+        self.head_clover = self._create_head(image_feature_dim)
+        self.head_green = self._create_head(image_feature_dim)
 
         if freeze_backbone:
             self.freeze_backbone()
-
+    def _create_head(self, feature_dim):
+        return nn.Sequential(
+        nn.Linear(feature_dim, feature_dim//2), 
+        nn.GELU(),
+        nn.Dropout(0.3),
+        nn.Linear(feature_dim//2, feature_dim//4),
+        nn.GELU(),
+        nn.Dropout(0.3),
+        nn.Linear(feature_dim//4, 1)
+        )
     def load_pretrained(self):
         try:
             # Note: Ensure CFG is accessible or pass model_name here
@@ -84,17 +78,12 @@ class BiomassModelMLP(nn.Module):
         image_features = torch.cat([fl, fr], dim=1)
 
         p_total = F.softplus(self.head_total(image_features))
-
-        preds = self.head_ratios(image_features)
-        r_dead, r_clover = preds.split(1, dim=1)
-
-        p_dead  = p_total * r_dead
-        p_clover  = p_total * r_clover
-
-        p_gdm = p_total - p_dead
-        p_green = p_gdm - p_clover
+        p_gdm = F.softplus(self.head_gdm(image_features))
+        p_clover = F.softplus(self.head_clover(image_features))
+        p_green = F.softplus(self.head_green(image_features))
+        p_dead = p_total - p_gdm
         
-        return (p_total, p_gdm, p_green)
+        return (p_total, p_gdm, p_green, p_clover, p_dead)
 
 class BiomassSimpleMLP(nn.Module):
     def __init__(self, image_feature_dim):

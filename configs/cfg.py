@@ -9,7 +9,7 @@ class CFG:
     LOG             = False
 
     # TIMM
-    MODEL_NAME = 'vit_large_patch16_dinov3'
+    MODEL_NAME = 'vit_small_patch16_dinov3'
     PATIENCE     = 20
     
     # CLIP
@@ -22,9 +22,9 @@ class CFG:
     CHECKPOINT_PATH = None #'adapters/r8/lora_finetuned_convnext_base_r8.pt'
     FREEZE_BACKBONE = True
 
-    IMG_SIZE     = 512 
+    IMG_SIZE     = 1008 
     ALPHA_CLIP   = 0.1
-    BATCH_SIZE   = 64
+    BATCH_SIZE   = 8
     GRAD_ACC     = 1    # effective batch = 8
     NUM_WORKERS  = 4
     EPOCHS       = 60

@@ -8,11 +8,11 @@ import pandas as pd
 from utils.augs import *
 
 class BiomassDatasetBase(Dataset):
-    def __init__(self, df, transform, photometric_transform, img_dir, multiplier):
+    def __init__(self, df, transform, photometric_transform, img_dir, multiplier=1, val_transform=None):
         self.df        = df
         self.transform = transform
         self.ph_transform = photometric_transform
-        self.val_transform = get_val_transforms()
+        self.val_transform = val_transform or get_val_transforms()
         self.img_dir   = img_dir
         self.paths     = df['image_path'].values
         self.labels    = df[CFG.ALL_TARGET_COLS].values.astype(np.float32)
@@ -22,8 +22,9 @@ class BiomassDatasetBase(Dataset):
 
     def __getitem__(self, idx):
         real_idx = idx % len(self.df)
-        current_copy_number = idx // len(self.df)
-        is_first_copy = (current_copy_number == 0)
+        is_train_copy = (idx // len(self.df)) > 0 or self.multiplier == 1
+        # When multiplier=1: always val transforms
+        # When multiplier>1: first pass though=val, rest=train
         path = os.path.join(self.img_dir, os.path.basename(self.paths[real_idx]))
         img  = cv2.imread(path)
         if img is None:
@@ -34,20 +35,19 @@ class BiomassDatasetBase(Dataset):
         mid = w // 2
         left  = img[:, :mid]
         right = img[:, mid:]
-        if not is_first_copy:
+        
+        if self.multiplier > 1 and idx // len(self.df) > 0:
+            # Training copy: apply spatial then photometric
             if self.transform:
-                # transformed = self.transform(image=left, image_right=right)
-                # left  = transformed['image']
-                # right = transformed['image_right']
                 left = self.transform(image=left)['image']
                 right = self.transform(image=right)['image']
-
-            # 2. Apply PHOTOMETRIC transforms (independently)
             left  = self.ph_transform(image=left)['image']
             right = self.ph_transform(image=right)['image']
         else:
+            # Validation / first copy: val transforms only
             left = self.val_transform(image=left)['image']
             right = self.val_transform(image=right)['image']
+            
         label = torch.from_numpy(self.labels[real_idx])
         return left, right, label
     

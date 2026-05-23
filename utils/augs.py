@@ -3,45 +3,33 @@ import torchvision.transforms as T
 from albumentations.pytorch import ToTensorV2
 from configs.cfg import CFG
 
-def get_spatial_transforms():
-    # These will be applied to BOTH images identically
+def get_spatial_transforms(size=None):
+    """Spatial transforms applied IDENTICALLY to both image halves."""
+    size = size or CFG.IMG_SIZE
     return A.Compose([
-        A.Resize(CFG.IMG_SIZE, CFG.IMG_SIZE),
+        A.Resize(size, size),
         A.HorizontalFlip(p=0.5),
         A.VerticalFlip(p=0.5),
         A.RandomRotate90(p=0.5),
-    ], 
-    p=1.0,
-    # additional_targets={'image_right': 'image'},
-    seed=CFG.SEED 
-    )
-def get_photometric_transforms():
-    # These will be applied INDEPENDENTLY to each half
+    ], p=1.0, seed=CFG.SEED)
+
+def get_photometric_transforms(size=None):
+    """Photometric transforms applied INDEPENDENTLY to each half."""
+    size = size or CFG.IMG_SIZE
     return A.Compose([
-        A.ColorJitter(brightness=0.5,contrast=0.5,saturation=0.5,hue=0.05,p=1.0),
-        # A.RandomShadow(
-        #     shadow_roi=[0, 0, 1, 1],
-        #     num_shadows_limit=[2, 3],
-        #     shadow_dimension=5,
-        #     shadow_intensity_range=[0.2, 0.5]
-        # ),
-        # A.RandomSunFlare(
-        #     flare_roi=[0.1, 0.1, 0.9, 0.9],
-        #     src_radius=20,
-        #     src_color=[255, 0, 0],
-        #     angle_range=[1, 1],
-        #     num_flare_circles_range=[1, 1],
-        #     method="physics_based"
-        # ),
+        A.Resize(size, size),
+        A.ColorJitter(brightness=0.5, contrast=0.5, saturation=0.5, hue=0.05, p=1.0),
         A.Normalize(mean=[0.485, 0.456, 0.406],
-                    std =[0.229, 0.224, 0.225]),
+                    std=[0.229, 0.224, 0.225]),
         ToTensorV2()
     ], p=1.0, seed=CFG.SEED)
 
-def get_val_transforms():
+def get_val_transforms(size=None):
+    """Validation transforms (resize + normalize only)."""
+    size = size or CFG.IMG_SIZE
     return A.Compose([
-        A.Resize(CFG.IMG_SIZE, CFG.IMG_SIZE),
+        A.Resize(size, size),
         A.Normalize(mean=[0.485, 0.456, 0.406],
-                    std =[0.229, 0.224, 0.225]),
+                    std=[0.229, 0.224, 0.225]),
         ToTensorV2()
     ], p=1.0, seed=CFG.SEED)

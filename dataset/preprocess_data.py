@@ -1,4 +1,4 @@
-from sklearn.model_selection import StratifiedGroupKFold
+from sklearn.model_selection import StratifiedGroupKFold, StratifiedKFold, GroupKFold
 import timm
 from tqdm import tqdm
 from configs.cfg import CFG
@@ -10,34 +10,25 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 import torch
+import os
+import json
 
 def check_splits(splitter, df):
     fold_stats = []
     for fold, (tr_idx, val_idx) in enumerate(splitter):
-        # Get the actual data for this fold
         train_fold = df.iloc[tr_idx]
         val_fold   = df.iloc[val_idx]
-        
-        # Calculate stats
         n_train = len(train_fold)
         n_val   = len(val_fold)
         ratio   = n_val / (n_train + n_val) * 100
-        
-        # Check "Hardness" (Mean target value)
-        # If one fold has a mean of 100 and another 500, your folds are NOT balanced.
         val_mean_total_dry = val_fold['Dry_Total_g'].mean()
         val_mean_green_dry = val_fold['Dry_Green_g'].mean()
         val_mean_dead_dry = val_fold['Dry_Dead_g'].mean()
         val_mean_clover_dry = val_fold['Dry_Clover_g'].mean()
         val_mean_gdm = val_fold['GDM_g'].mean()
-
         val_mean_weighted = CFG.R2_WEIGHTS_VAL[4] * val_mean_total_dry + CFG.R2_WEIGHTS_VAL[0] * val_mean_green_dry + CFG.R2_WEIGHTS_VAL[1] * val_mean_dead_dry + CFG.R2_WEIGHTS_VAL[2] * val_mean_clover_dry + CFG.R2_WEIGHTS_VAL[3] * val_mean_gdm
-        
         print(f"{fold+1:<5} | {n_train:<12} | {n_val:<10} | {ratio:<6.2f}% | Dry_Total_g:{val_mean_total_dry:<8.4f} | Dry_Green_g:{val_mean_green_dry:<8.4f} | Dry_Dead_g:{val_mean_dead_dry:<8.4f} | Dry_Clover_g:{val_mean_clover_dry:<8.4f} | GDM_g:{val_mean_gdm:<8.4f}  | Weighted_g:{val_mean_weighted:<8.4f}")
-        
         fold_stats.append(n_val)
-
-    # 3. Check Deviation
     mean_size = np.mean(fold_stats)
     max_dev = np.max(np.abs(fold_stats - mean_size)) / mean_size * 100
     print("-" * 65)
@@ -49,53 +40,30 @@ def get_df():
     df_wide = df_long.pivot(index='image_path', columns='target_name', values='target').reset_index()
     df_wide = df_wide[['image_path'] + CFG.ALL_TARGET_COLS]
     print(f"{len(df_wide)} training images")
-
-    # Aux task
     aux_cols = ['image_path', 'Sampling_Date', 'State', 'Species', 'Pre_GSHH_NDVI', 'Height_Ave_cm']
     df_aux = df_long[aux_cols].drop_duplicates().reset_index(drop=True)
-
     df_wide = df_wide.merge(df_aux, on='image_path', how='left')
-
     df_wide['State_idx'],   STATE_MAP   = pd.factorize(df_wide['State'])
     df_wide['Species_idx'], SPECIES_MAP = pd.factorize(df_wide['Species'])
-
-    # 2. Convert Date to cyclical features (we'll predict these)
     df_wide['Sampling_Date'] = pd.to_datetime(df_wide['Sampling_Date'])
     df_wide['day_of_year'] = df_wide['Sampling_Date'].dt.dayofyear
     df_wide['day_sin'] = np.sin(2 * np.pi * df_wide['day_of_year'] / 365.25)
     df_wide['day_cos'] = np.cos(2 * np.pi * df_wide['day_of_year'] / 365.25)
-
     df_wide['group'] = df_wide['State'].astype(str) + "_" + df_wide['Sampling_Date'].astype(str)
-    # df_wide['group'] = df_wide['Sampling_Date'].astype(str)
     df_wide['biomass_bin'] = pd.qcut(df_wide['Dry_Total_g'], q=10, labels=False)
-
     return df_wide
 
 def create_hard_extrapolation_split(df, target_col='Dry_Total_g', percentile=0.80):
-    """
-    Splits the dataframe based on target VALUE, not random chance.
-    
-    Train: The bottom 80% of biomass (Small/Medium plants)
-    Test:  The top 20% of biomass (Large/Peak plants)
-    
-    Purpose: Tests if the model/TTA can predict values HIGHER than it has ever seen.
-    """
-    # 1. Determine the cutoff value
     cutoff_value = df[target_col].quantile(percentile)
-    
-    # 2. Strict Cut
     train_df = df[df[target_col] < cutoff_value].reset_index(drop=True)
     val_df   = df[df[target_col] >= cutoff_value].reset_index(drop=True)
-    
     print(f"\n--- HARD EXTRAPOLATION SPLIT ---")
     print(f"Cutoff Value (80th percentile): {cutoff_value:.2f}")
     print(f"Train Set: {len(train_df)} images (Max Mass: {train_df[target_col].max():.2f})")
     print(f"Valid Set: {len(val_df)} images (Min Mass: {val_df[target_col].min():.2f})")
     print(f"The Validation set contains ONLY values unseen in Training.")
-    
     return train_df, val_df
 
-# Define your weights exactly as you listed them
 WEIGHTS_MAP = {
     'Dry_Green_g': 0.1,
     'Dry_Dead_g':  0.1,
@@ -105,81 +73,150 @@ WEIGHTS_MAP = {
 }
 
 def calculate_weighted_score(df):
-    """Helper to create the column just like you did in check_splits"""
-    # Start with 0
     weighted_col = np.zeros(len(df))
     for col, w in WEIGHTS_MAP.items():
         weighted_col += df[col] * w
     return weighted_col
 
 def find_best_seed(df, n_seeds=2000):
-    """
-    Iterates through random seeds to find the one that minimizes the 
-    statistical difference between folds for critical targets.
-    """
-    
-    # 1. Prepare Data for Search
-    # We calculate the weighted column purely for the balancing metric
     df_search = df.copy()
     df_search['Weighted_g'] = calculate_weighted_score(df_search)
-    
-    # We want to balance these specific columns. 
-    # We prioritize 'Dry_Clover_g' because it is sparse/weird (your Fold 4 issue).
-    # We prioritize 'Weighted_g' because it represents the overall difficulty.
     targets_to_balance = ['Weighted_g', 'Dry_Clover_g', 'Dry_Dead_g']
-    
     best_seed = -1
     lowest_penalty = float('inf')
-    
     print(f"🔍 Searching {n_seeds} seeds for the most balanced split...")
-    
     for seed in tqdm(range(n_seeds)):
-        # Initialize the splitter with the current seed
         sgkf = StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=seed)
-        
-        # We collect the means of our targets for each fold
         fold_means = {t: [] for t in targets_to_balance}
-        
         try:
-            # Iterate through the folds
             for _, val_idx in sgkf.split(df_search, df_search['biomass_bin'], groups=df_search['group']):
                 val_fold = df_search.iloc[val_idx]
-                
                 for t in targets_to_balance:
                     fold_means[t].append(val_fold[t].mean())
-            
-            # --- CALCULATE PENALTY ---
-            # We use Coefficient of Variation (Std Dev / Mean). 
-            # This normalizes the score so 'Total_g' (big numbers) doesn't overpower 'Clover' (small numbers).
             current_penalty = 0
             for t in targets_to_balance:
                 means_array = np.array(fold_means[t])
-                # If global mean is 0, avoid division by zero
-                global_mean = df_search[t].mean() + 1e-6 
-                
-                # How much do the folds deviate from each other?
+                global_mean = df_search[t].mean() + 1e-6
                 cv = np.std(means_array) / global_mean
                 current_penalty += cv
-            
-            # If this seed is more balanced than the previous best, save it
             if current_penalty < lowest_penalty:
                 lowest_penalty = current_penalty
                 best_seed = seed
-                
         except ValueError:
             continue
-
     print("-" * 50)
     print(f"✅ Best Seed Found: {best_seed}")
     print(f"📉 Penalty Score: {lowest_penalty:.4f} (Lower is better)")
-    
     return best_seed
+
+def get_image_id(path):
+    """Extract image ID (without extension) from a path."""
+    return os.path.splitext(os.path.basename(path))[0]
+
+def extract_features_organized(df, model, save_dir='embeddings', n_aug=20, batch_size=32, device='cuda'):
+    """
+    Extract DINOv3 embeddings for all images and save as compact single files.
+    Uses CFG.IMG_SIZE for image resizing.
+    
+    Output structure:
+      embeddings/
+        clean_embeddings.pt     # [N, 2048] — val transforms, no augmentation
+        aug_embeddings.pt       # [N, n_aug, 2048] — augmented versions
+        targets.pt              # [N, 5]
+        image_ids.csv           # image_path → index mapping
+        metadata.json           # config info for reproducibility
+    """
+    import shutil
+    if os.path.exists(save_dir):
+        print(f"Removing existing {save_dir}/...")
+        shutil.rmtree(save_dir)
+    os.makedirs(save_dir, exist_ok=True)
+    
+    # Save targets and image IDs
+    targets = df[CFG.ALL_TARGET_COLS].values.astype(np.float32)
+    torch.save(torch.from_numpy(targets), os.path.join(save_dir, 'targets.pt'))
+    df[['image_path']].to_csv(os.path.join(save_dir, 'image_ids.csv'), index=False)
+    
+    n_images = len(df)
+    img_size = CFG.IMG_SIZE
+    
+    # Use augs.py transforms with CFG.IMG_SIZE
+    val_transform = get_val_transforms(img_size)
+    spatial_transform = get_spatial_transforms(img_size)
+    photometric_transform = get_photometric_transforms(img_size)
+    
+    # --- Extract clean embeddings (multiplier=1, val transforms) ---
+    print("Extracting CLEAN embeddings [N, 2048]...")
+    dataset_clean = BiomassDatasetBase(
+        df, transform=None, photometric_transform=None,
+        img_dir=CFG.TRAIN_IMAGE_DIR, multiplier=1,
+        val_transform=val_transform
+    )
+    loader_clean = DataLoader(dataset_clean, batch_size=batch_size, shuffle=False, num_workers=4)
+    
+    clean_embeddings = torch.zeros(n_images, 2048)
+    idx = 0
+    with torch.no_grad(), torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+        for left, right, _ in tqdm(loader_clean, desc='Clean'):
+            left, right = left.to(device), right.to(device)
+            f_l = model(left)
+            f_r = model(right)
+            feats = torch.cat([f_l, f_r], dim=1).cpu()
+            n_batch = feats.shape[0]
+            clean_embeddings[idx:idx+n_batch] = feats
+            idx += n_batch
+    
+    torch.save(clean_embeddings, os.path.join(save_dir, 'clean_embeddings.pt'))
+    print(f"  Saved: {os.path.join(save_dir, 'clean_embeddings.pt')} ({clean_embeddings.shape})")
+    
+    # --- Extract augmented embeddings (multiplier=n_aug, train transforms) ---
+    print(f"Extracting {n_aug}× AUGMENTED embeddings [N, {n_aug}, 2048]...")
+    
+    dataset_aug = BiomassDatasetBase(
+        df, transform=spatial_transform, photometric_transform=photometric_transform,
+        img_dir=CFG.TRAIN_IMAGE_DIR, multiplier=n_aug,
+        val_transform=val_transform
+    )
+    loader_aug = DataLoader(dataset_aug, batch_size=batch_size, shuffle=False, num_workers=4)
+    
+    aug_embeddings = torch.zeros(n_images * n_aug, 2048)
+    idx = 0
+    # with torch.no_grad(), torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+    #     for left, right, _ in tqdm(loader_aug, desc='Augmented'):
+    #         left, right = left.to(device), right.to(device)
+    #         f_l = model(left)
+    #         f_r = model(right)
+    #         feats = torch.cat([f_l, f_r], dim=1).cpu()
+    #         n_batch = feats.shape[0]
+    #         aug_embeddings[idx:idx+n_batch] = feats
+    #         idx += n_batch
+    
+    # aug_embeddings = aug_embeddings.view(n_images, n_aug, 2048)
+    # torch.save(aug_embeddings, os.path.join(save_dir, 'aug_embeddings.pt'))
+    print(f"  Saved: {os.path.join(save_dir, 'aug_embeddings.pt')} ({aug_embeddings.shape})")
+    
+    # Save metadata
+    meta = {
+        'n_images': n_images,
+        'n_aug': n_aug,
+        'img_size': img_size,
+        'embedding_dim': 2048,
+        'backbone': 'vit_large_patch16_dinov3',
+        'target_cols': list(CFG.ALL_TARGET_COLS),
+    }
+    with open(os.path.join(save_dir, 'metadata.json'), 'w') as f:
+        json.dump(meta, f, indent=2)
+    
+    total_mb = (clean_embeddings.numel() + aug_embeddings.numel()) * 4 / 1e6
+    print(f"Done! {n_images} images × {1 + n_aug} versions = {n_images * (1 + n_aug)} embeddings ({total_mb:.1f} MB total)")
+    print(f"Saved to {save_dir}/")
+    return save_dir
+
 
 def extract_features_to_disk(df, model, save_path, mode='val', device='cuda'):
     """
     Runs images through DINO -> Pools -> Saves Tensors to .pt file
     """
-    # Setup
     multiplier = 20 if mode == 'train' else 1
     spatial_transform = get_spatial_transforms() if mode=='train' else None
     photometric_transform = get_photometric_transforms() if mode=='train' else get_val_transforms()
@@ -196,19 +233,12 @@ def extract_features_to_disk(df, model, save_path, mode='val', device='cuda'):
         for left, right, targets in tqdm(loader, leave=False):
             left = left.to(device)
             right = right.to(device)
-            
-            # 1. Backbone Forward
-            f_l = model(left)  # [B, N, 384]
+            f_l = model(left)
             f_r = model(right)
-            
-            # 2. Concatenate Stereo
-            x_all = torch.cat([f_l, f_r], dim=1) # [B, 2048, 384]
-
-            # 4. Collect (Move to CPU immediately to save VRAM)
+            x_all = torch.cat([f_l, f_r], dim=1)
             all_features.append(x_all.cpu())
             all_targets.append(targets)
-            
-    # Save as one big dictionary
+    
     data_dict = {
         'features': torch.cat(all_features),
         'targets': torch.cat(all_targets)
@@ -216,86 +246,91 @@ def extract_features_to_disk(df, model, save_path, mode='val', device='cuda'):
     torch.save(data_dict, save_path)
     print(f"      Saved to {save_path}")
 
-# ---------------------------------------------------------
-# 4. The Main Orchestrator Function
-# ---------------------------------------------------------
 def prepare_cached_folds(df, splits, model_name, base_dir):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    
-    # 1. Load Backbone ONCE
     print(f"Loading Backbone: {model_name}...")
     backbone = timm.create_model(model_name, pretrained=True, num_classes=0)
     backbone.to(device)
-    backbone.eval() # Freeze
+    backbone.eval()
     
-    # 2. Loop through Folds
     for fold, (tr_idx, val_idx) in enumerate(splits):
         print(f"\nProcessing FOLD {fold+1}...")
-        
-        # Create Fold Directory
         fold_dir = os.path.join(base_dir, f"fold_{fold+1}")
         os.makedirs(fold_dir, exist_ok=True)
-        
-        # Split DataFrame
         tr_df = df.iloc[tr_idx]
         val_df = df.iloc[val_idx]
-        
-        # Extract TRAIN (With Augmentations)
-        extract_features_to_disk(
-            tr_df, backbone, 
-            save_path=os.path.join(fold_dir, 'train.pt'), 
-            mode='train', device=device
-        )
-        
-        # Extract VAL (Clean)
-        extract_features_to_disk(
-            val_df, backbone, 
-            save_path=os.path.join(fold_dir, 'val.pt'), 
-            mode='val', device=device
-        )
-        
+        extract_features_to_disk(tr_df, backbone, save_path=os.path.join(fold_dir, 'train.pt'), mode='train', device=device)
+        extract_features_to_disk(val_df, backbone, save_path=os.path.join(fold_dir, 'val.pt'), mode='val', device=device)
+    
     print("\nAll folds cached successfully!")
     del backbone
     torch.cuda.empty_cache()
 
 from sklearn.neighbors import NearestNeighbors
-import numpy as np
 
 def get_plant_neighbor_map(features, views_per_plant=20, k=1):
-    """
-    Returns an array of size (N_samples,) where index [i] is the index 
-    of a sample from the NEAREST DIFFERENT PLANT.
-    """
-    # 1. Reshape to (N_plants, Views, Dim)
-    # Assumes data is ordered: [Plant1_v1...Plant1_v20, Plant2_v1...]
     num_samples, dim = features.shape
     num_plants = num_samples // views_per_plant
     features_reshaped = features.view(num_plants, views_per_plant, dim)
-    
-    # 2. Calculate Plant Centroids (Average of all views)
     centroids = features_reshaped.mean(dim=1).cpu().numpy()
-    
-    # 3. Find Nearest Neighbors between CENTROIDS
-    # k+1 because the closest is always itself
     nbrs = NearestNeighbors(n_neighbors=k+1, metric='cosine', n_jobs=-1)
     nbrs.fit(centroids)
     _, plant_indices = nbrs.kneighbors(centroids)
-    
-    # The nearest neighbor that isn't itself is at index 1
-    nearest_plant_ids = plant_indices[:, 1] # Shape: (N_plants,)
-    
-    # 4. Create the Sample Map
-    # For every view of Plant A, we assign a random view of Plant B
+    nearest_plant_ids = plant_indices[:, 1]
     neighbor_map = np.zeros(num_samples, dtype=int)
-    
     for i in range(num_samples):
         current_plant_id = i // views_per_plant
         target_plant_id = nearest_plant_ids[current_plant_id]
-        
-        # Pick a random view from the target plant
         random_view = np.random.randint(0, views_per_plant)
         neighbor_idx = (target_plant_id * views_per_plant) + random_view
-        
         neighbor_map[i] = neighbor_idx
-        
     return neighbor_map
+
+def load_embeddings_for_split(embed_dir, train_idx, val_idx, n_aug=20):
+    """
+    Load precomputed embeddings for train/val indices using compact single-file format.
+    """
+    targets = torch.load(os.path.join(embed_dir, 'targets.pt'))
+    clean_embeddings = torch.load(os.path.join(embed_dir, 'clean_embeddings.pt'))
+    
+    return (
+        clean_embeddings[train_idx],
+        targets[train_idx],
+        clean_embeddings[val_idx],
+        targets[val_idx]
+    )
+
+class EmbeddingAugmentationDataset(Dataset):
+    """
+    Dataset that samples augmented embeddings on-the-fly from compact single-file storage.
+    
+    clean_embeddings.pt: [N, 2048] — val transforms
+    aug_embeddings.pt:   [N, n_aug, 2048] — augmented versions
+    
+    For training: randomly samples one of n_aug augmented versions per __getitem__ call.
+    For validation: always returns the clean embedding.
+    """
+    def __init__(self, indices, embed_dir, n_aug=20, is_train=True):
+        self.indices = indices
+        self.embed_dir = embed_dir
+        self.n_aug = n_aug
+        self.is_train = is_train
+        self.targets = torch.load(os.path.join(embed_dir, 'targets.pt'))
+        self.clean_embeddings = torch.load(os.path.join(embed_dir, 'clean_embeddings.pt'))
+        if os.path.exists(os.path.join(embed_dir, 'aug_embeddings.pt')):
+            self.aug_embeddings = torch.load(os.path.join(embed_dir, 'aug_embeddings.pt'))
+        else:
+            self.aug_embeddings = None
+    
+    def __len__(self):
+        return len(self.indices)
+    
+    def __getitem__(self, idx):
+        real_idx = self.indices[idx]
+        if self.is_train and self.aug_embeddings is not None:
+            aug_idx = np.random.randint(0, self.n_aug)
+            feat = self.aug_embeddings[real_idx, aug_idx]
+        else:
+            feat = self.clean_embeddings[real_idx]
+        target = self.targets[real_idx]
+        return feat, target

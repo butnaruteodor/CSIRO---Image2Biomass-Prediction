@@ -168,7 +168,7 @@ def get_interpolated_weights(current_epoch, total_epochs, start_weights, end_wei
     # Return as a tensor on the correct device (assuming you have 'device' defined globally or pass it)
     return torch.tensor(w_current, dtype=torch.float32)
 
-def weighted_biomass_loss(p_total, p_gdm, p_green, p_clover, p_dead, labels, deltas, constr_weight, target_weights):
+def weighted_biomass_loss(p_total, p_gdm, p_green, p_clover, p_dead, labels):
     """
     Calculates the 5 individual MSE losses and returns their
     weighted sum, perfectly aligning with the R2 metric weights.
@@ -178,18 +178,18 @@ def weighted_biomass_loss(p_total, p_gdm, p_green, p_clover, p_dead, labels, del
 
     # 1. Calculate the 5 individual MSE losses
     loss_green = loss_fn(p_green.squeeze(), labels[:, 0]) # Corresponds to Dry_Green_g
-    loss_dead  = F.smooth_l1_loss(p_dead.squeeze(),  labels[:, 1], beta=3.0) # Corresponds to Dry_Dead_g
+    loss_dead  = loss_fn(p_dead.squeeze(),  labels[:, 1]) # Corresponds to Dry_Dead_g
     loss_clover = loss_fn(p_clover.squeeze(), labels[:, 2]) # Corresponds to Dry_Clover_g
     loss_gdm   = loss_fn(p_gdm.squeeze(),   labels[:, 3]) # Corresponds to GDM_g
     loss_total = loss_fn(p_total.squeeze(), labels[:, 4]) # Corresponds to Dry_Total_g
     
     # 3. Apply the weights to their corresponding losses
     weighted_loss_sum = (
-        loss_green  * target_weights[0] +
-        loss_dead   * target_weights[1] +
-        loss_clover * target_weights[2] +
-        loss_gdm    * target_weights[3] +
-        loss_total  * target_weights[4]
+        loss_green  * CFG.R2_WEIGHTS_VAL[0] +
+        loss_dead   * CFG.R2_WEIGHTS_VAL[1] +
+        loss_clover * CFG.R2_WEIGHTS_VAL[2] +
+        loss_gdm    * CFG.R2_WEIGHTS_VAL[3] +
+        loss_total  * CFG.R2_WEIGHTS_VAL[4]
     )
     
     cons_dead_positive = F.relu(p_gdm.squeeze() - p_total.squeeze()).mean()
@@ -207,7 +207,7 @@ def weighted_biomass_loss(p_total, p_gdm, p_green, p_clover, p_dead, labels, del
     physics_penalty = cons_dead_positive + cons_parts_valid + cons_green_valid
     
     # Total loss is Accuracy + Physics
-    return weighted_loss_sum + (constr_weight * physics_penalty)
+    return weighted_loss_sum #+ (constr_weight * physics_penalty)
 
 def global_clip_loss(image_embeddings, all_text_anchors, global_indices, logit_scale):
     """

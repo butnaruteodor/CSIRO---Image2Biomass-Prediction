@@ -47,46 +47,23 @@ def train_epoch_clip(model, loader, opt, scheduler, device, scaler, text_anchors
     return running / len(loader)
 
 
-def train_epoch_base(model, loader, opt, scheduler, device, scaler, deltas, epoch_num):
+def train_epoch_base(model, loader, opt, scheduler, device, scaler, epoch_num):
     model.train()
     running = 0.0
     opt.zero_grad()
-    for i, (features, targets, n_feat, n_target) in enumerate(tqdm(loader, desc='train', leave=False)):
-        features, targets = features.to(device), targets.to(device)
-        n_feat, n_target = n_feat.to(device), n_target.to(device)
-        # if np.random.rand() < 0.5: 
-        #     alpha = 0.8
-        #     lam = np.random.beta(alpha, alpha)
-            
-        #     # 2. Shuffle indices to find "Partner" for every sample
-        #     batch_size = features.size(0)
-        #     index = torch.randperm(batch_size).to(device)
-            
-        #     # 3. Create the Mixed Batch
-        #     # We blend Feature A with Feature B
-        #     features = slerp(lam, features, features[index])
+    for i, (l, r, lab) in enumerate(tqdm(loader, desc='train', leave=False)):
+        l, r, lab = l.to(device, non_blocking=True), r.to(device, non_blocking=True), lab.to(device, non_blocking=True)
 
-        #     # 4. Create the Mixed Targets
-        #     # We blend Label A with Label B (Works perfectly for regression!)
-        #     targets = lam * targets + (1 - lam) * targets[index]
-
-        epoch_target_weights = get_interpolated_weights(
-            current_epoch=epoch_num,
-            total_epochs=CFG.EPOCHS,  # or a shorter duration if you want faster transition
-            start_weights=CFG.R2_WEIGHTS_TRAIN,
-            end_weights=CFG.R2_WEIGHTS_VAL
-            ).to(device)
-        constraint_weight = get_constraint_weight(epoch_num, start_epoch=3,ramp_epochs=10,max_weight=1.0)
         with autocast('cuda',dtype=torch.bfloat16):
-            (p_tot, p_gdm, p_green, p_clover, p_dead) = model(features)
-            loss_reg = weighted_biomass_loss(p_tot, p_gdm, p_green, p_clover, p_dead, targets, deltas, constraint_weight, epoch_target_weights)
+            (p_tot, p_gdm, p_green, p_clover, p_dead) = model(l,r)
+            loss_reg = weighted_biomass_loss(p_tot, p_gdm, p_green, p_clover, p_dead, lab)
             # loss_reg = weighted_biomass_log_loss(p_tot, p_gdm, p_green, lab)
             total_loss = loss_reg
         
         loss = total_loss / CFG.GRAD_ACC
         scaler.scale(loss).backward()
         # loss.backward()
-        running += loss.item() * features.size(0) * CFG.GRAD_ACC
+        running += loss.item() * l.size(0) * CFG.GRAD_ACC
 
         if (i + 1) % CFG.GRAD_ACC == 0 or (i + 1) == len(loader):
             scaler.unscale_(opt)
@@ -136,34 +113,34 @@ def train_epoch_base_w_clip(model, loader, opt, scheduler, device, scaler, text_
     return running / len(loader.dataset)
 
 @torch.no_grad()
-def valid_epoch_base(model, loader, device, deltas):
+def valid_epoch_base(model, loader, device):
     model.eval()
     running_loss = 0.0
-    preds = {'total':[], 'gdm':[], 'green':[]}
+    preds = {'total':[], 'gdm':[], 'green':[], 'clover':[], 'dead':[]}
     all_labels = []
 
-    for (features, targets) in tqdm(loader, desc='valid', leave=False):
-        features, targets = features.to(device, non_blocking=True), targets.to(device, non_blocking=True)
+    for l, r, lab in tqdm(loader, desc='valid', leave=False):
+        l, r, lab = l.to(device, non_blocking=True), r.to(device, non_blocking=True), lab.to(device, non_blocking=True)
         with autocast('cuda',dtype=torch.bfloat16):
-            (p_tot, p_gdm, p_green, p_clover, p_dead) = model(features)
+            (p_tot, p_gdm, p_green, p_clover, p_dead) = model(l,r)
 
-            loss = weighted_biomass_loss(p_tot, p_gdm, p_green, p_clover, p_dead, targets, deltas, 0, CFG.R2_WEIGHTS_VAL)
-        running_loss += loss.item() * features.size(0)
+            loss = weighted_biomass_loss(p_tot, p_gdm, p_green, p_clover, p_dead, lab)
+        running_loss += loss.item() * l.size(0)
 
         preds['total'].extend(p_tot.cpu().float().numpy().ravel())
         preds['gdm'].extend(p_gdm.cpu().float().numpy().ravel())
         preds['green'].extend(p_green.cpu().float().numpy().ravel())
-        all_labels.extend(targets.cpu().float().numpy())
+        preds['clover'].extend(p_clover.cpu().float().numpy().ravel())
+        preds['dead'].extend(p_dead.cpu().float().numpy().ravel())
+        all_labels.extend(lab.cpu().float().numpy())
 
     # Convert to numpy
     pred_total = np.array(preds['total'])
     pred_gdm   = np.array(preds['gdm'])
     pred_green = np.array(preds['green'])
+    pred_clover   = np.array(preds['clover'])
+    pred_dead = np.array(preds['dead'])
     true_labels = np.stack(all_labels)  # (N, 5)
-
-    # Compute derived
-    pred_clover = np.clip(pred_gdm - pred_green, 0, None)
-    pred_dead   = np.clip(pred_total - pred_gdm, 0, None)
 
     # Stack predictions in correct order
     pred_all = np.stack([
@@ -312,28 +289,20 @@ def train_clip(tr_df, val_df):
     del optimizer, val_loader, tr_loader
     return model
 
-def train_base(fold_dir, tr_df, val_df, model_id, model_state_dict=None, group_name=None, test_df=None):
-    train_labels_tensor = torch.tensor(
-        tr_df[["Dry_Green_g", "Dry_Dead_g", "Dry_Clover_g", "GDM_g", "Dry_Total_g"]].values, 
-        dtype=torch.float32
-    )
-    deltas = calculate_deltas(train_labels_tensor)
-
-    train_data = torch.load(f"{fold_dir}/train.pt")
-    val_data = torch.load(f"{fold_dir}/val.pt")
-
-    VIEWS_PER_PLANT = 20 # <--- DOUBLE CHECK THIS
-    neighbor_map = get_plant_neighbor_map(train_data['features'], views_per_plant=VIEWS_PER_PLANT)
-
-    train_ds = PairedDataset(train_data['features'], train_data['targets'], neighbor_map)
-    val_ds = torch.utils.data.TensorDataset(val_data['features'], val_data['targets']) 
+def train_base(tr_df, val_df, model_id, model_state_dict=None, group_name=None, test_df=None):
+    tr_set = BiomassDatasetBase(tr_df, get_spatial_transforms(), get_photometric_transforms(), CFG.TRAIN_IMAGE_DIR)
+    val_set= BiomassDatasetBase(val_df, None, get_val_transforms(), CFG.TRAIN_IMAGE_DIR)
 
     g = get_generator()
-    tr_loader = DataLoader(train_ds, batch_size=CFG.BATCH_SIZE, shuffle=True, num_workers=CFG.NUM_WORKERS, pin_memory=True, drop_last=False, worker_init_fn=seed_worker,generator=g) # Huge batch size!
-    val_loader   = DataLoader(val_ds, batch_size=CFG.BATCH_SIZE, shuffle=False, num_workers=CFG.NUM_WORKERS, pin_memory=True, drop_last=False, worker_init_fn=seed_worker,generator=g)
+    tr_loader = DataLoader(tr_set, batch_size=CFG.BATCH_SIZE, shuffle=True, num_workers=CFG.NUM_WORKERS, pin_memory=True, drop_last=False, worker_init_fn=seed_worker,generator=g) # Huge batch size!
+    val_loader   = DataLoader(val_set, batch_size=CFG.BATCH_SIZE, shuffle=False, num_workers=CFG.NUM_WORKERS, pin_memory=True, drop_last=False, worker_init_fn=seed_worker,generator=g)
     
     print("Building model...")
-    model = BiomassOneLayer(2048)
+    model = BiomassModelMLP(
+            CFG.MODEL_NAME, 
+            freeze_backbone=CFG.FREEZE_BACKBONE,
+            model_state_dict=model_state_dict
+        )
     model = model.to(CFG.DEVICE)
     # model = nn.DataParallel(model)
     parameters = model.parameters()
@@ -363,8 +332,8 @@ def train_base(fold_dir, tr_df, val_df, model_id, model_state_dict=None, group_n
     patience = 0
     scaler = torch.amp.GradScaler('cuda')
     for epoch in range(1, CFG.EPOCHS+1):
-        tr_loss = train_epoch_base(model, tr_loader, optimizer, scheduler, CFG.DEVICE, scaler, deltas, epoch)
-        val_loss, val_r2, per_target_r2 = valid_epoch_base(model, val_loader, CFG.DEVICE, deltas)
+        tr_loss = train_epoch_base(model, tr_loader, optimizer, scheduler, CFG.DEVICE, scaler, epoch)
+        val_loss, val_r2, per_target_r2 = valid_epoch_base(model, val_loader, CFG.DEVICE)
         test_loss, test_val_r2=0,0
 
         if val_r2>best_r2:
