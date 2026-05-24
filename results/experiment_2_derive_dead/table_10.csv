@@ -1,6 +1,0 @@
-Held-out period,Training periods,Weighted R2 ↑,RMSE ↓,MAE ↓,Bias
-Early,Middle + Late,0.7051,16.46,11.49,-0.339
-Middle,Early + Late,0.7561,9.63,7.56,-1.628
-Late,Early + Middle,0.7269,18.52,12.80,-4.380
-Mean,—,0.7294,14.87,10.62,-2.115
-Std,—,0.0219,3.81,2.25,2.360

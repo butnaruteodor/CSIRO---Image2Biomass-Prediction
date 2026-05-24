@@ -98,8 +98,51 @@ def load_results(path):
     return torch.load(path, map_location='cpu', weights_only=False)
 
 
+def aggregate_seed_results_oof(seed_results):
+    """Aggregate OOF-based seed results into mean±std for all metrics.
+    
+    Each seed_result contains metrics computed on the FULL OOF array (357, 5).
+    We compute mean ± std across seeds — no per-fold averaging.
+    """
+    n = len(seed_results)
+    if n == 0:
+        return {}
+    
+    # Weighted R2 (one scalar per seed)
+    w_r2_vals = np.array([r['weighted_r2'] for r in seed_results])
+    
+    # Per-target R2 (dicts)
+    t_r2_vals = {tk: np.array([r['per_target_r2'][tk] for r in seed_results]) 
+                 for tk in TARGET_NAMES}
+    
+    # Per-target arrays (one (5,) per seed)
+    p_rmse = np.stack([r['per_rmse'] for r in seed_results])  # (n_seeds, 5)
+    p_mae  = np.stack([r['per_mae'] for r in seed_results])
+    p_bias = np.stack([r['per_bias'] for r in seed_results])
+    
+    return {
+        'weighted_r2_mean': np.mean(w_r2_vals),
+        'weighted_r2_std':  np.std(w_r2_vals, ddof=1),
+        'weighted_r2_min':  np.min(w_r2_vals),
+        'weighted_r2_max':  np.max(w_r2_vals),
+        'per_target_r2_mean': {tk: np.mean(t_r2_vals[tk]) for tk in TARGET_NAMES},
+        'per_target_r2_std':  {tk: np.std(t_r2_vals[tk], ddof=1) for tk in TARGET_NAMES},
+        'per_rmse_mean': np.mean(p_rmse, axis=0),  # (5,)
+        'per_rmse_std':  np.std(p_rmse, axis=0, ddof=1),
+        'per_mae_mean':  np.mean(p_mae, axis=0),
+        'per_mae_std':   np.std(p_mae, axis=0, ddof=1),
+        'per_bias_mean': np.mean(p_bias, axis=0),
+        'per_bias_std':  np.std(p_bias, axis=0, ddof=1),
+        'n_results': n,
+    }
+
+
 def aggregate_fold_list(fold_results):
-    """Aggregate fold-level results into mean±std for all metrics."""
+    """Aggregate fold-level results into mean±std for all metrics.
+    
+    Used for LOPO tables (per-period breakdown) and error breakdown.
+    For the MAIN tables (8, 9), use aggregate_seed_results_oof instead.
+    """
     n = len(fold_results)
     if n == 0:
         return {}
@@ -116,9 +159,6 @@ def aggregate_fold_list(fold_results):
     p_mae  = np.stack([r['per_mae'] for r in fold_results])
     p_bias = np.stack([r['per_bias'] for r in fold_results])
     
-    # Best epoch
-    epochs = np.array([r['best_epoch'] for r in fold_results])
-    
     return {
         'weighted_r2_mean': np.mean(w_r2_vals),
         'weighted_r2_std':  np.std(w_r2_vals, ddof=1),
@@ -132,11 +172,6 @@ def aggregate_fold_list(fold_results):
         'per_mae_std':   np.std(p_mae, axis=0, ddof=1),
         'per_bias_mean': np.mean(p_bias, axis=0),
         'per_bias_std':  np.std(p_bias, axis=0, ddof=1),
-        'best_epoch_median': np.median(epochs),
-        'best_epoch_mean':   np.mean(epochs),
-        'best_epoch_std':    np.std(epochs, ddof=1),
-        'best_epoch_min':    np.min(epochs),
-        'best_epoch_max':    np.max(epochs),
         'n_results': n,
     }
 
@@ -151,7 +186,12 @@ def format_mean_std(mean, std, decimals=4):
 # ============================================================
 
 def generate_table_8(all_results, label):
-    """Enhanced Table 8 with mean±std for each protocol."""
+    """Enhanced Table 8 with mean±std for each protocol.
+    
+    Uses OOF-based seed_results: each seed produces a single set of metrics
+    computed on the FULL concatenated OOF array (357, 5). We compute mean±std
+    across seeds — NOT by averaging per-fold metrics.
+    """
     protocol_order = [
         'random_stratified', 'date_grouped', 'date_location_grouped',
         'date_location_grouped_splits_weighted', 'leave_one_period_out',
@@ -162,8 +202,8 @@ def generate_table_8(all_results, label):
     for protocol in protocol_order:
         if protocol not in all_results:
             continue
-        fr_list = all_results[protocol]['fold_results']
-        agg = aggregate_fold_list(fr_list)
+        seed_results = all_results[protocol]['seed_results']
+        agg = aggregate_seed_results_oof(seed_results)
         
         rows.append({
             'Protocol': SPLIT_DISPLAY_NAMES.get(protocol, protocol),
@@ -191,7 +231,11 @@ def generate_table_8(all_results, label):
 # ============================================================
 
 def generate_table_9(all_results, label):
-    """Enhanced Table 9: per-target R2 mean±std per protocol."""
+    """Enhanced Table 9: per-target R2 mean±std per protocol.
+    
+    Uses OOF-based seed_results — each seed produces metrics on the full
+    (357, 5) OOF array, avoiding per-fold average artifacts.
+    """
     protocol_order = [
         'random_stratified', 'date_grouped', 'date_location_grouped',
         'date_location_grouped_splits_weighted', 'leave_one_period_out',
@@ -202,8 +246,8 @@ def generate_table_9(all_results, label):
     for protocol in protocol_order:
         if protocol not in all_results:
             continue
-        fr_list = all_results[protocol]['fold_results']
-        agg = aggregate_fold_list(fr_list)
+        seed_results = all_results[protocol]['seed_results']
+        agg = aggregate_seed_results_oof(seed_results)
         
         row = {'Protocol': SPLIT_DISPLAY_NAMES.get(protocol, protocol)}
         for i, (tk, ts) in enumerate(zip(TARGET_NAMES, TARGET_SHORT)):
