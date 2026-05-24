@@ -16,7 +16,7 @@ def per_target_r2_score(y_true: np.ndarray, y_pred: np.ndarray):
     Returns:
         dict: A dictionary mapping target names to their R² scores.
     """
-    target_names = ["Dry_Green", "Dry_Dead", "Dry_Clover", "GDM", "Dry_Total"]
+    target_names = ["Dry_Green_g", "Dry_Dead_g", "Dry_Clover_g", "GDM_g", "Dry_Total_g"]
     scores = {}
 
     # 'raw_values' returns an array of R² scores, one for each column

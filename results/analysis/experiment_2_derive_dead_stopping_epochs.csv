@@ -1,0 +1,31 @@
+Protocol,Seed,Median epoch,Min,Max
+Random stratified 5-fold CV,13,37,19,46
+Random stratified 5-fold CV,21,46,9,66
+Random stratified 5-fold CV,42,35,24,68
+Random stratified 5-fold CV,87,42,13,70
+Random stratified 5-fold CV,101,35,7,45
+Date-grouped 5-fold CV,13,19,13,43
+Date-grouped 5-fold CV,21,26,18,40
+Date-grouped 5-fold CV,42,27,21,69
+Date-grouped 5-fold CV,87,23,5,47
+Date-grouped 5-fold CV,101,28,10,52
+Date-location grouped 5-fold CV,13,20,7,53
+Date-location grouped 5-fold CV,21,19,4,54
+Date-location grouped 5-fold CV,42,30,11,52
+Date-location grouped 5-fold CV,87,16,8,38
+Date-location grouped 5-fold CV,101,14,8,37
+Date-location grouped (weighted stratify),13,23,12,64
+Date-location grouped (weighted stratify),21,16,10,58
+Date-location grouped (weighted stratify),42,42,20,62
+Date-location grouped (weighted stratify),87,30,15,59
+Date-location grouped (weighted stratify),101,14,7,26
+Leave-one-period-out,13,30,11,39
+Leave-one-period-out,21,12,5,36
+Leave-one-period-out,42,37,17,42
+Leave-one-period-out,87,20,13,36
+Leave-one-period-out,101,28,5,28
+Leave-one-state-out,13,19,9,43
+Leave-one-state-out,21,16,6,40
+Leave-one-state-out,42,16,12,23
+Leave-one-state-out,87,22,9,45
+Leave-one-state-out,101,14,5,38

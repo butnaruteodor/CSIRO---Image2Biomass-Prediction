@@ -15,7 +15,7 @@ def seed_worker(worker_id):
     np.random.seed(s)
     random.seed(s)
 
-def get_generator():
+def get_generator(seed):
     g = torch.Generator()
-    g.manual_seed(CFG.SEED)
+    g.manual_seed(seed)
     return g

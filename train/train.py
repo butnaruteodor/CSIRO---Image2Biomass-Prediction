@@ -51,19 +51,19 @@ def train_epoch_base(model, loader, opt, scheduler, device, scaler, epoch_num):
     model.train()
     running = 0.0
     opt.zero_grad()
-    for i, (l, r, lab) in enumerate(tqdm(loader, desc='train', leave=False)):
-        l, r, lab = l.to(device, non_blocking=True), r.to(device, non_blocking=True), lab.to(device, non_blocking=True)
+    for i, (features, targets) in enumerate(tqdm(loader, desc='train', leave=False)):
+        features, targets = features.to(device), targets.to(device)
 
         with autocast('cuda',dtype=torch.bfloat16):
-            (p_tot, p_gdm, p_green, p_clover, p_dead) = model(l,r)
-            loss_reg = weighted_biomass_loss(p_tot, p_gdm, p_green, p_clover, p_dead, lab)
+            (p_tot, p_gdm, p_green, p_clover, p_dead) = model(features)
+            loss_reg = weighted_biomass_loss(p_tot, p_gdm, p_green, p_clover, p_dead, targets)
             # loss_reg = weighted_biomass_log_loss(p_tot, p_gdm, p_green, lab)
             total_loss = loss_reg
         
         loss = total_loss / CFG.GRAD_ACC
         scaler.scale(loss).backward()
         # loss.backward()
-        running += loss.item() * l.size(0) * CFG.GRAD_ACC
+        running += loss.item() * features.size(0) * CFG.GRAD_ACC
 
         if (i + 1) % CFG.GRAD_ACC == 0 or (i + 1) == len(loader):
             scaler.unscale_(opt)
@@ -119,20 +119,20 @@ def valid_epoch_base(model, loader, device):
     preds = {'total':[], 'gdm':[], 'green':[], 'clover':[], 'dead':[]}
     all_labels = []
 
-    for l, r, lab in tqdm(loader, desc='valid', leave=False):
-        l, r, lab = l.to(device, non_blocking=True), r.to(device, non_blocking=True), lab.to(device, non_blocking=True)
+    for (features, targets) in tqdm(loader, desc='valid', leave=False):
+        features, targets = features.to(device, non_blocking=True), targets.to(device, non_blocking=True)
         with autocast('cuda',dtype=torch.bfloat16):
-            (p_tot, p_gdm, p_green, p_clover, p_dead) = model(l,r)
+            (p_tot, p_gdm, p_green, p_clover, p_dead) = model(features)
 
-            loss = weighted_biomass_loss(p_tot, p_gdm, p_green, p_clover, p_dead, lab)
-        running_loss += loss.item() * l.size(0)
+            loss = weighted_biomass_loss(p_tot, p_gdm, p_green, p_clover, p_dead, targets)
+        running_loss += loss.item() * features.size(0)
 
         preds['total'].extend(p_tot.cpu().float().numpy().ravel())
         preds['gdm'].extend(p_gdm.cpu().float().numpy().ravel())
         preds['green'].extend(p_green.cpu().float().numpy().ravel())
         preds['clover'].extend(p_clover.cpu().float().numpy().ravel())
         preds['dead'].extend(p_dead.cpu().float().numpy().ravel())
-        all_labels.extend(lab.cpu().float().numpy())
+        all_labels.extend(targets.cpu().float().numpy())
 
     # Convert to numpy
     pred_total = np.array(preds['total'])
@@ -289,20 +289,21 @@ def train_clip(tr_df, val_df):
     del optimizer, val_loader, tr_loader
     return model
 
-def train_base(tr_df, val_df, model_id, model_state_dict=None, group_name=None, test_df=None):
-    tr_set = BiomassDatasetBase(tr_df, get_spatial_transforms(), get_photometric_transforms(), CFG.TRAIN_IMAGE_DIR)
-    val_set= BiomassDatasetBase(val_df, None, get_val_transforms(), CFG.TRAIN_IMAGE_DIR)
+def train_base(train_set, val_set, model_id, model_state_dict=None, group_name=None, test_df=None):
+    # tr_set = BiomassDatasetBase(tr_df, get_spatial_transforms(), get_photometric_transforms(), CFG.TRAIN_IMAGE_DIR)
+    # val_set= BiomassDatasetBase(val_df, None, get_val_transforms(), CFG.TRAIN_IMAGE_DIR)
 
     g = get_generator()
-    tr_loader = DataLoader(tr_set, batch_size=CFG.BATCH_SIZE, shuffle=True, num_workers=CFG.NUM_WORKERS, pin_memory=True, drop_last=False, worker_init_fn=seed_worker,generator=g) # Huge batch size!
+    tr_loader = DataLoader(train_set, batch_size=CFG.BATCH_SIZE, shuffle=True, num_workers=CFG.NUM_WORKERS, pin_memory=True, drop_last=False, worker_init_fn=seed_worker,generator=g) # Huge batch size!
     val_loader   = DataLoader(val_set, batch_size=CFG.BATCH_SIZE, shuffle=False, num_workers=CFG.NUM_WORKERS, pin_memory=True, drop_last=False, worker_init_fn=seed_worker,generator=g)
     
     print("Building model...")
-    model = BiomassModelMLP(
-            CFG.MODEL_NAME, 
-            freeze_backbone=CFG.FREEZE_BACKBONE,
-            model_state_dict=model_state_dict
-        )
+    # model = BiomassModelMLP(
+    #         CFG.MODEL_NAME, 
+    #         freeze_backbone=CFG.FREEZE_BACKBONE,
+    #         model_state_dict=model_state_dict
+    #     )
+    model = BiomassSimpleMLP(2048)
     model = model.to(CFG.DEVICE)
     # model = nn.DataParallel(model)
     parameters = model.parameters()

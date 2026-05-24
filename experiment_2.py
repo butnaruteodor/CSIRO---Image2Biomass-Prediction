@@ -23,13 +23,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.amp import autocast
 from torch.utils.data import Dataset, DataLoader
-from sklearn.model_selection import StratifiedKFold, GroupKFold
+from sklearn.model_selection import KFold, StratifiedKFold, GroupKFold, StratifiedGroupKFold
 from tqdm import tqdm
 
 # Project modules
 from configs.cfg import CFG
 from configs.deterministic import set_seed, seed_worker, get_generator
-from dataset.preprocess_data import get_df, EmbeddingAugmentationDataset
+from dataset.preprocess_data import check_splits, get_df, EmbeddingAugmentationDataset
 from models.models import BiomassSimpleMLP
 from utils.eval import global_weighted_r2_score, per_target_r2_score, weighted_biomass_loss
 
@@ -41,23 +41,28 @@ RESULTS_DIR = 'results/experiment_2'
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
 # Training params matching PDF spec
-LR = 1e-4
-WD = 1e-4
+LR = 1e-3
+WD = 1e-2
 EPOCHS = 80
 WARMUP_EPOCHS = 5
-PATIENCE = 12
-BATCH_SIZE = 32  # MLP on features: much larger batches possible
+PATIENCE = 15
+BATCH_SIZE = 8  # MLP on features: much larger batches possible
 GRAD_ACC = 1
 N_FOLDS = 5
-N_AUG = 20
+N_AUG = 15
 
 SEEDS = [13, 21, 42, 87, 101]
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-FEATURE_DIM = 2048  # 1024 left + 1024 right
+# Read embedding dimension from metadata
+import json
+with open(os.path.join(EMBED_DIR, 'metadata.json')) as f:
+    _meta = json.load(f)
+FEATURE_DIM = _meta['embedding_dim']
+print(f"Embedding dimension: {FEATURE_DIM}")
 
 # Weighted R2 weights (from CFG)
 R2_WEIGHTS = torch.tensor(CFG.R2_WEIGHTS_VAL, dtype=torch.float32, device=DEVICE)
-TARGET_NAMES = ['Dry_Green', 'Dry_Dead', 'Dry_Clover', 'GDM', 'Dry_Total']
+TARGET_NAMES = ['Dry_Green_g', 'Dry_Dead_g', 'Dry_Clover_g', 'GDM_g', 'Dry_Total_g']
 
 # ============================================================
 # SPLIT STRATEGIES
@@ -65,29 +70,44 @@ TARGET_NAMES = ['Dry_Green', 'Dry_Dead', 'Dry_Clover', 'GDM', 'Dry_Total']
 
 def get_random_stratified_splits(df, seed):
     """Random stratified 5-fold CV (IID validation)."""
-    bins = pd.qcut(df['Dry_Total_g'], q=10, labels=False, duplicates='drop')
+    bins = pd.qcut(df['Dry_Total_g'], q=5, labels=False)
     skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=seed)
+
+    check_splits(skf.split(df, bins),df)
+    
     return list(skf.split(df, bins))
 
 def get_date_grouped_splits(df, seed):
     """Date-grouped 5-fold CV (unseen sampling dates)."""
-    # Use unique dates as groups
+    # Use unique dates as groups. Stratify by Total biomass quantiles.
     dates = df['Sampling_Date'].astype(str)
-    gkf = GroupKFold(n_splits=5)
-    return list(gkf.split(df, groups=dates))
+    bins = pd.qcut(df['Dry_Total_g'], q=5, labels=False, duplicates='drop')
+    sgkf = StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=seed)
 
-def get_location_grouped_splits(df, seed):
-    """Location-grouped 5-fold CV (unseen locations)."""
-    locations = df['State']
-    gkf = GroupKFold(n_splits=5)
-    return list(gkf.split(df, groups=locations))
+    check_splits(sgkf.split(df, bins, groups=dates), df)
+
+    return list(sgkf.split(df, bins, groups=dates))
 
 def get_date_location_grouped_splits(df, seed):
     """Date-location grouped 5-fold CV (unseen acquisition contexts).
     This is the PRIMARY validation protocol per the PDF."""
     groups = df['group']  # Already created in get_df() as State_Date
-    gkf = GroupKFold(n_splits=5)
-    return list(gkf.split(df, groups=groups))
+    bins = pd.qcut(df['Dry_Total_g'], q=5, labels=False, duplicates='drop')
+    sgkf = StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=seed)
+
+    check_splits(sgkf.split(df, bins, groups=groups), df)
+
+    return list(sgkf.split(df, bins, groups=groups))
+
+def get_date_location_grouped_splits_weighted(df, seed):
+    """Same as primary but stratified on Weighted_g instead of Total."""
+    groups = df['group']
+    bins = pd.qcut(df['Weighted_g'], q=5, labels=False, duplicates='drop')
+    sgkf = StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=seed)
+
+    check_splits(sgkf.split(df, bins, groups=groups), df)
+    
+    return list(sgkf.split(df, bins, groups=groups))
 
 def get_lopo_splits(df, seed):
     """Leave-one-period-out splits.
@@ -110,20 +130,42 @@ def get_lopo_splits(df, seed):
     
     return splits
 
+def get_loso_splits(df, seed):
+    """Leave-one-state-out: 4 fixed splits, no seeds needed."""
+    splits = []
+    state_names = []
+    for state in sorted(df['State'].unique()):
+        val_idx   = df.index[df['State'] == state].tolist()
+        train_idx = df.index[df['State'] != state].tolist()
+        splits.append((train_idx, val_idx))
+        state_names.append(state)
+        
+        # reuse check_splits logic inline for visibility
+        n_val = len(val_idx)
+        n_train = len(train_idx)
+        val_fold = df.loc[val_idx]
+        # print(f"Leave-{state}-out | train:{n_train} val:{n_val} | "
+        #       f"Weighted_g:{val_fold['Weighted_g'].mean():.2f} | "
+        #       f"missions:{val_fold['group'].nunique()}")
+    
+    return splits
+
 SPLIT_STRATEGIES = {
     'random_stratified': get_random_stratified_splits,
     'date_grouped': get_date_grouped_splits,
-    'location_grouped': get_location_grouped_splits,
     'date_location_grouped': get_date_location_grouped_splits,
+    'date_location_grouped_splits_weighted' :get_date_location_grouped_splits_weighted,
     'leave_one_period_out': get_lopo_splits,
+    'leave_one_state_out': get_loso_splits
 }
 
 SPLIT_DISPLAY_NAMES = {
     'random_stratified': 'Random stratified 5-fold CV',
     'date_grouped': 'Date-grouped 5-fold CV',
-    'location_grouped': 'Location-grouped 5-fold CV',
     'date_location_grouped': 'Date-location grouped 5-fold CV',
+    'date_location_grouped_splits_weighted': 'Date-location grouped 5-fold CV stratified by weighted targets',
     'leave_one_period_out': 'Leave-one-period-out',
+    'leave_one_state_out': 'Leave-one-state-out'
 }
 
 LOPO_PERIOD_NAMES = ['Early', 'Middle', 'Late']
@@ -186,23 +228,18 @@ def valid_epoch_mlp(model, loader):
     weighted_r2 = global_weighted_r2_score(all_labels, all_preds)
     per_target = per_target_r2_score(all_labels, all_preds)
     
-    # Compute RMSE, MAE, Bias (per target then weighted)
+    # Compute unweighted per-target RMSE, MAE, Bias (scientific metrics)
     errors = all_preds - all_labels
-    per_rmse = np.sqrt(np.mean(errors**2, axis=0))
-    per_mae = np.mean(np.abs(errors), axis=0)
-    per_bias = np.mean(errors, axis=0)
-    
-    weights = CFG.R2_WEIGHTS_VAL
-    weighted_rmse = np.sum(per_rmse * weights)
-    weighted_mae = np.sum(per_mae * weights)
-    weighted_bias = np.sum(per_bias * weights)
+    per_rmse = np.sqrt(np.mean(errors**2, axis=0))    # shape (5,)
+    per_mae = np.mean(np.abs(errors), axis=0)          # shape (5,)
+    per_bias = np.mean(errors, axis=0)                 # shape (5,)
     
     return {
         'weighted_r2': weighted_r2,
         'per_target_r2': per_target,
-        'weighted_rmse': weighted_rmse,
-        'weighted_mae': weighted_mae,
-        'weighted_bias': weighted_bias,
+        'per_rmse': per_rmse,
+        'per_mae': per_mae,
+        'per_bias': per_bias,
         'preds': all_preds,
         'targets': all_labels,
     }
@@ -217,13 +254,13 @@ def train_model(train_idx, val_idx, embed_dir, seed):
     
     # Create datasets
     train_set = EmbeddingAugmentationDataset(
-        train_idx, embed_dir, n_aug=N_AUG, is_train=True
+        train_idx, embed_dir, n_aug=N_AUG, is_train=False
     )
     val_set = EmbeddingAugmentationDataset(
         val_idx, embed_dir, n_aug=N_AUG, is_train=False
     )
     
-    g = get_generator()
+    g = get_generator(seed)
     train_loader = DataLoader(
         train_set, batch_size=BATCH_SIZE, shuffle=True,
         num_workers=4, pin_memory=True, worker_init_fn=seed_worker, generator=g
@@ -239,16 +276,16 @@ def train_model(train_idx, val_idx, embed_dir, seed):
     optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=WD)
     
     # Warmup + Cosine scheduler
-    warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
-        optimizer, start_factor=1e-3, end_factor=1.0, total_iters=WARMUP_EPOCHS
+    # warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
+    #     optimizer, start_factor=1e-3, end_factor=1.0, total_iters=WARMUP_EPOCHS
+    # )
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=EPOCHS
     )
-    main_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=EPOCHS - WARMUP_EPOCHS
-    )
-    scheduler = torch.optim.lr_scheduler.SequentialLR(
-        optimizer, schedulers=[warmup_scheduler, main_scheduler],
-        milestones=[WARMUP_EPOCHS]
-    )
+    # scheduler = torch.optim.lr_scheduler.SequentialLR(
+    #     optimizer, schedulers=[warmup_scheduler, main_scheduler],
+    #     milestones=[WARMUP_EPOCHS]
+    # )
     
     scaler = torch.amp.GradScaler('cuda')
     
@@ -262,7 +299,8 @@ def train_model(train_idx, val_idx, embed_dir, seed):
         scheduler.step()
         
         val_r2 = val_metrics['weighted_r2']
-        
+
+        # print("Epoch: ", epoch, val_r2)
         if val_r2 > best_score:
             best_score = val_r2
             best_metrics = val_metrics
@@ -331,10 +369,10 @@ def run_experiment():
                 metrics['n_val'] = len(val_idx)
                 seed_fold_results.append(metrics)
                 
-                print(f"    Weighted R2: {metrics['weighted_r2']:.4f} | "
-                      f"RMSE: {metrics['weighted_rmse']:.4f} | "
-                      f"MAE: {metrics['weighted_mae']:.4f} | "
-                      f"Bias: {metrics['weighted_bias']:.4f}")
+                print(f"    Weighted R2: {metrics['weighted_r2']:.4f}")
+                print(f"    Per-target RMSE: {', '.join(f'{v:.2f}' for v in metrics['per_rmse'])}")
+                print(f"    Per-target MAE:  {', '.join(f'{v:.2f}' for v in metrics['per_mae'])}")
+                print(f"    Per-target Bias: {', '.join(f'{v:.3f}' for v in metrics['per_bias'])}")
                 for i, name in enumerate(['Green', 'Dead', 'Clover', 'GDM', 'Total']):
                     print(f"      {name}: R2={metrics['per_target_r2'][TARGET_NAMES[i]]:.4f}", end="")
                     if i < 4:
@@ -354,10 +392,11 @@ def run_experiment():
         protocol_results['aggregated'] = protocol_avg
         all_results[protocol_name] = protocol_results
         
+        per_rmse_avg = protocol_avg['per_rmse']
+        per_rmse_std = protocol_avg['std_per_rmse']
         print(f"\n  >>> {display_name}: "
               f"R2={protocol_avg['weighted_r2']:.4f}±{protocol_avg['std_weighted_r2']:.4f} | "
-              f"RMSE={protocol_avg['weighted_rmse']:.4f}±{protocol_avg['std_weighted_rmse']:.4f} | "
-              f"MAE={protocol_avg['weighted_mae']:.4f}±{protocol_avg['std_weighted_mae']:.4f}")
+              f"Per-target RMSE: {', '.join(f'{v:.2f}±{s:.2f}' for v,s in zip(per_rmse_avg, per_rmse_std))}")
     
     # Save results
     save_path = os.path.join(RESULTS_DIR, 'full_results.pt')
@@ -366,7 +405,7 @@ def run_experiment():
     
     # Generate tables
     generate_table_8(all_results)
-    generate_table_9(all_results)
+    generate_table_9(all_results, df)
     generate_table_10(all_results, df)
     generate_table_11(all_results, df)
     
@@ -380,13 +419,18 @@ def run_experiment():
 
 def aggregate_fold_results(fold_results):
     """Average metrics across folds for one seed."""
-    keys = ['weighted_r2', 'weighted_rmse', 'weighted_mae', 'weighted_bias']
     aggregated = {}
     
-    for key in keys:
-        values = [r[key] for r in fold_results]
-        aggregated[key] = np.mean(values)
-        aggregated[f'std_{key}'] = np.std(values)
+    # Weighted R2 (scalar per fold)
+    values = [r['weighted_r2'] for r in fold_results]
+    aggregated['weighted_r2'] = np.mean(values)
+    aggregated['std_weighted_r2'] = np.std(values)
+    
+    # Per-target metrics (arrays of shape (5,) per fold) → average as arrays
+    for metric in ['per_rmse', 'per_mae', 'per_bias']:
+        vals = np.stack([r[metric] for r in fold_results])  # (n_folds, 5)
+        aggregated[metric] = vals.mean(axis=0)
+        aggregated[f'std_{metric}'] = vals.std(axis=0)
     
     # Per-target R2
     per_target_keys = list(fold_results[0]['per_target_r2'].keys())
@@ -404,14 +448,25 @@ def aggregate_fold_results(fold_results):
 
 def aggregate_seed_results(seed_results):
     """Average metrics across seeds."""
-    keys = ['weighted_r2', 'weighted_rmse', 'weighted_mae', 'weighted_bias',
-            'std_weighted_r2', 'std_weighted_rmse', 'std_weighted_mae', 'std_weighted_bias']
-    
     aggregated = {}
-    for key in keys:
-        values = [r[key] for r in seed_results]
-        aggregated[key] = np.mean(values)
-        aggregated[f'std_{key}_across_seeds'] = np.std(values)
+    
+    # Weighted R2 (scalar)
+    values = [r['weighted_r2'] for r in seed_results]
+    aggregated['weighted_r2'] = np.mean(values)
+    aggregated['std_weighted_r2_across_seeds'] = np.std(values)
+    
+    # Std of weighted_r2 across seeds (already averaged across folds)
+    std_vals = [r['std_weighted_r2'] for r in seed_results]
+    aggregated['std_weighted_r2'] = np.mean(std_vals)
+    
+    # Per-target metrics (arrays of shape (5,)) → stack and average
+    for metric in ['per_rmse', 'per_mae', 'per_bias']:
+        vals = np.stack([r[metric] for r in seed_results])   # (n_seeds, 5)
+        aggregated[metric] = vals.mean(axis=0)                # (5,)
+        aggregated[f'std_{metric}_across_seeds'] = vals.std(axis=0, ddof=1)  # (5,)
+        # Also average the intra-seed stds
+        intra_std_vals = np.stack([r.get(f'std_{metric}', np.zeros(5)) for r in seed_results])
+        aggregated[f'std_{metric}'] = intra_std_vals.mean(axis=0)
     
     # Per-target R2 across seeds
     per_target_keys = list(seed_results[0]['per_target_r2'].keys())
@@ -437,17 +492,25 @@ def generate_table_8(all_results):
     Columns: Protocol, Local weighted R2↑, Std, Local RMSE↓, Local MAE↓, Distance to hidden↓
     """
     rows = []
-    protocol_order = ['random_stratified', 'date_grouped', 'location_grouped', 
-                      'date_location_grouped', 'leave_one_period_out']
+    protocol_order = [
+                      'random_stratified', 
+                      'date_grouped',
+                      'date_location_grouped', 
+                      'date_location_grouped_splits_weighted',
+                      'leave_one_period_out',
+                      'leave_one_state_out'
+                      ]
     
     for protocol in protocol_order:
         agg = all_results[protocol]['aggregated']
+        agg_per_rmse = agg['per_rmse']  # shape (5,) — Green, Dead, Clover, GDM, Total
+        agg_per_mae = agg['per_mae']
         rows.append({
             'Validation protocol': SPLIT_DISPLAY_NAMES[protocol],
             'Local weighted R2 ↑': f"{agg['weighted_r2']:.4f}",
             'Std': f"{agg['std_weighted_r2']:.4f}",
-            'Local RMSE ↓': f"{agg['weighted_rmse']:.4f}",
-            'Local MAE ↓': f"{agg['weighted_mae']:.4f}",
+            'Local RMSE ↓ (Total)': f"{agg_per_rmse[4]:.2f}",
+            'Local MAE ↓ (Total)': f"{agg_per_mae[4]:.2f}",
             'Distance to hidden ↓': 'TBD',  # Requires Kaggle submission
         })
     
@@ -467,8 +530,14 @@ def generate_table_9(all_results, df):
     Table 9: Per-target R2 under different validation protocols.
     """
     rows = []
-    protocol_order = ['random_stratified', 'date_grouped', 'location_grouped',
-                      'date_location_grouped', 'leave_one_period_out']
+    protocol_order = [
+                      'random_stratified',
+                      'date_grouped',
+                      'date_location_grouped', 
+                      'date_location_grouped_splits_weighted',
+                      'leave_one_period_out',
+                      'leave_one_state_out'
+                      ]
     target_map = {'Dry_Green_g': 'Target 1', 'Dry_Dead_g': 'Target 2', 
                   'Dry_Clover_g': 'Target 3', 'GDM_g': 'Target 4', 'Dry_Total_g': 'Target 5'}
     target_cols = ['Dry_Green_g', 'Dry_Dead_g', 'Dry_Clover_g', 'GDM_g', 'Dry_Total_g']
@@ -514,51 +583,53 @@ def generate_table_10(all_results, df):
                     fold_results_by_seed[fold_idx] = []
                 fold_results_by_seed[fold_idx].append(fr)
     
+    # Helper to get Total-target (index 4) metric from per-target arrays
+    def _total_metric(fr, key):
+        """Extract the Dry_Total (index 4) entry from a per-target array."""
+        return fr[key][4]
+    
     rows = []
     for period_idx, period_name in enumerate(['Early', 'Middle', 'Late']):
         if period_idx not in fold_results_by_seed:
             continue
         
-        period_r2s = [r['weighted_r2'] for r in fold_results_by_seed[period_idx]]
-        period_rmses = [r['weighted_rmse'] for r in fold_results_by_seed[period_idx]]
-        period_maes = [r['weighted_mae'] for r in fold_results_by_seed[period_idx]]
-        period_biases = [r['weighted_bias'] for r in fold_results_by_seed[period_idx]]
-        
-        # Get test samples count and mean
-        val_idx = None
-        # Find any fold result to get indices
-        if lopo_results['fold_results']:
-            fr = lopo_results['fold_results'][0]
+        fr_list = fold_results_by_seed[period_idx]
+        period_r2s = [r['weighted_r2'] for r in fr_list]
+        period_rmses = [_total_metric(r, 'per_rmse') for r in fr_list]
+        period_maes = [_total_metric(r, 'per_mae') for r in fr_list]
+        period_biases = [_total_metric(r, 'per_bias') for r in fr_list]
         
         rows.append({
             'Held-out period': period_name,
             'Training periods': {'Early': 'Middle + Late', 'Middle': 'Early + Late', 'Late': 'Early + Middle'}[period_name],
             'Weighted R2 ↑': f"{np.mean(period_r2s):.4f}",
-            'RMSE ↓': f"{np.mean(period_rmses):.4f}",
-            'MAE ↓': f"{np.mean(period_maes):.4f}",
-            'Bias': f"{np.mean(period_biases):.4f}",
+            'RMSE ↓': f"{np.mean(period_rmses):.2f}",
+            'MAE ↓': f"{np.mean(period_maes):.2f}",
+            'Bias': f"{np.mean(period_biases):.3f}",
         })
     
-    # Add mean/std rows
-    all_period_r2s = [r['weighted_r2'] for fr_list in fold_results_by_seed.values() for r in fr_list]
-    all_period_rmses = [r['weighted_rmse'] for fr_list in fold_results_by_seed.values() for r in fr_list]
-    all_period_maes = [r['weighted_mae'] for fr_list in fold_results_by_seed.values() for r in fr_list]
+    # Add mean/std rows (across all periods)
+    all_fr = [r for fr_list in fold_results_by_seed.values() for r in fr_list]
+    all_period_r2s = [r['weighted_r2'] for r in all_fr]
+    all_period_rmses = [_total_metric(r, 'per_rmse') for r in all_fr]
+    all_period_maes = [_total_metric(r, 'per_mae') for r in all_fr]
+    all_period_biases = [_total_metric(r, 'per_bias') for r in all_fr]
     
     rows.append({
         'Held-out period': 'Mean',
         'Training periods': '—',
         'Weighted R2 ↑': f"{np.mean(all_period_r2s):.4f}",
-        'RMSE ↓': f"{np.mean(all_period_rmses):.4f}",
-        'MAE ↓': f"{np.mean(all_period_maes):.4f}",
-        'Bias': f"{np.mean([r['weighted_bias'] for fr_list in fold_results_by_seed.values() for r in fr_list]):.4f}",
+        'RMSE ↓': f"{np.mean(all_period_rmses):.2f}",
+        'MAE ↓': f"{np.mean(all_period_maes):.2f}",
+        'Bias': f"{np.mean(all_period_biases):.3f}",
     })
     rows.append({
         'Held-out period': 'Std',
         'Training periods': '—',
         'Weighted R2 ↑': f"{np.std(all_period_r2s):.4f}",
-        'RMSE ↓': f"{np.std(all_period_rmses):.4f}",
-        'MAE ↓': f"{np.std(all_period_maes):.4f}",
-        'Bias': f"{np.std([r['weighted_bias'] for fr_list in fold_results_by_seed.values() for r in fr_list]):.4f}",
+        'RMSE ↓': f"{np.std(all_period_rmses):.2f}",
+        'MAE ↓': f"{np.std(all_period_maes):.2f}",
+        'Bias': f"{np.std(all_period_biases):.3f}",
     })
     
     df = pd.DataFrame(rows)

@@ -93,6 +93,7 @@ class BiomassSimpleMLP(nn.Module):
         self.head_gdm = self._create_head(image_feature_dim)
         self.head_clover = self._create_head(image_feature_dim)
         self.head_green = self._create_head(image_feature_dim)
+        self.head_dead = self._create_head(image_feature_dim)
 
     def _create_head(self, feature_dim):
         return nn.Sequential(
@@ -109,7 +110,7 @@ class BiomassSimpleMLP(nn.Module):
         p_gdm = F.softplus(self.head_gdm(feats))
         p_clover = F.softplus(self.head_clover(feats))
         p_green = F.softplus(self.head_green(feats))
-        p_dead = p_total - p_gdm
+        p_dead = F.softplus(self.head_dead(feats))
 
         return (p_total, p_gdm, p_green, p_clover, p_dead)
 

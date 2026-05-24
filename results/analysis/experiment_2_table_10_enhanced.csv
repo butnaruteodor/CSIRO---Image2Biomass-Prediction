@@ -1,0 +1,4 @@
+Held-out,Training,N,Weighted R2,RMSE (Total),MAE (Total),Bias (Total)
+Early,Middle + Late,5,0.7104 ± 0.0062,16.18 ± 0.23,11.07 ± 0.09,-0.688 ± 1.522
+Middle,Early + Late,5,0.7480 ± 0.0122,9.68 ± 0.30,7.60 ± 0.30,-0.763 ± 2.084
+Late,Early + Middle,5,0.7177 ± 0.0132,19.05 ± 0.67,13.26 ± 0.53,-4.418 ± 3.838

@@ -21,16 +21,37 @@ def check_splits(splitter, df):
         n_train = len(train_fold)
         n_val   = len(val_fold)
         ratio   = n_val / (n_train + n_val) * 100
-        val_mean_total_dry = val_fold['Dry_Total_g'].mean()
-        val_mean_green_dry = val_fold['Dry_Green_g'].mean()
-        val_mean_dead_dry = val_fold['Dry_Dead_g'].mean()
+
+        val_mean_total_dry  = val_fold['Dry_Total_g'].mean()
+        val_mean_green_dry  = val_fold['Dry_Green_g'].mean()
+        val_mean_dead_dry   = val_fold['Dry_Dead_g'].mean()
         val_mean_clover_dry = val_fold['Dry_Clover_g'].mean()
-        val_mean_gdm = val_fold['GDM_g'].mean()
-        val_mean_weighted = CFG.R2_WEIGHTS_VAL[4] * val_mean_total_dry + CFG.R2_WEIGHTS_VAL[0] * val_mean_green_dry + CFG.R2_WEIGHTS_VAL[1] * val_mean_dead_dry + CFG.R2_WEIGHTS_VAL[2] * val_mean_clover_dry + CFG.R2_WEIGHTS_VAL[3] * val_mean_gdm
-        print(f"{fold+1:<5} | {n_train:<12} | {n_val:<10} | {ratio:<6.2f}% | Dry_Total_g:{val_mean_total_dry:<8.4f} | Dry_Green_g:{val_mean_green_dry:<8.4f} | Dry_Dead_g:{val_mean_dead_dry:<8.4f} | Dry_Clover_g:{val_mean_clover_dry:<8.4f} | GDM_g:{val_mean_gdm:<8.4f}  | Weighted_g:{val_mean_weighted:<8.4f}")
+        val_mean_gdm        = val_fold['GDM_g'].mean()
+        val_mean_weighted   = (
+            CFG.R2_WEIGHTS_VAL[4] * val_mean_total_dry  +
+            CFG.R2_WEIGHTS_VAL[0] * val_mean_green_dry  +
+            CFG.R2_WEIGHTS_VAL[1] * val_mean_dead_dry   +
+            CFG.R2_WEIGHTS_VAL[2] * val_mean_clover_dry +
+            CFG.R2_WEIGHTS_VAL[3] * val_mean_gdm
+        )
+
+        # State distribution in val fold
+        state_counts = val_fold['State'].value_counts().to_dict()
+        n_missions   = val_fold['group'].nunique()
+        state_str    = " ".join(f"{s}:{c}" for s, c in sorted(state_counts.items()))
+
+        print(
+            f"{fold+1:<5} | {n_train:<12} | {n_val:<10} | {ratio:<6.2f}% | "
+            f"Dry_Total_g:{val_mean_total_dry:<8.4f} | Dry_Green_g:{val_mean_green_dry:<8.4f} | "
+            f"Dry_Dead_g:{val_mean_dead_dry:<8.4f} | Dry_Clover_g:{val_mean_clover_dry:<8.4f} | "
+            f"GDM_g:{val_mean_gdm:<8.4f} | Weighted_g:{val_mean_weighted:<8.4f} | "
+            f"missions:{n_missions:<3} | states:[{state_str}]"
+        )
         fold_stats.append(n_val)
-    mean_size = np.mean(fold_stats)
-    max_dev = np.max(np.abs(fold_stats - mean_size)) / mean_size * 100
+
+    fold_stats = np.array(fold_stats)
+    mean_size  = np.mean(fold_stats)
+    max_dev    = np.max(np.abs(fold_stats - mean_size)) / mean_size * 100
     print("-" * 65)
     print(f"Max deviation from ideal size: {max_dev:.2f}%")
 
@@ -51,6 +72,13 @@ def get_df():
     df_wide['day_cos'] = np.cos(2 * np.pi * df_wide['day_of_year'] / 365.25)
     df_wide['group'] = df_wide['State'].astype(str) + "_" + df_wide['Sampling_Date'].astype(str)
     df_wide['biomass_bin'] = pd.qcut(df_wide['Dry_Total_g'], q=10, labels=False)
+    df_wide['Weighted_g'] = sum(
+    df_wide[col] * w for col, w in zip(CFG.ALL_TARGET_COLS, CFG.R2_WEIGHTS_VAL))
+    
+    # missions = df_wide.groupby('group').size().sort_values(ascending=False)
+    # print(f"Total missions: {len(missions)}")
+    # print(f"Samples per mission — min: {missions.min()}, max: {missions.max()}, mean: {missions.mean():.1f}, median: {missions.median():.0f}")
+    # print(missions)
     return df_wide
 
 def create_hard_extrapolation_split(df, target_col='Dry_Total_g', percentile=0.80):
@@ -116,12 +144,13 @@ def get_image_id(path):
 def extract_features_organized(df, model, save_dir='embeddings', n_aug=20, batch_size=32, device='cuda'):
     """
     Extract DINOv3 embeddings for all images and save as compact single files.
-    Uses CFG.IMG_SIZE for image resizing.
+    Uses dynamic list append (same pattern as working extract_features_to_disk)
+    to avoid hardcoded dimension bugs.
     
     Output structure:
       embeddings/
-        clean_embeddings.pt     # [N, 2048] — val transforms, no augmentation
-        aug_embeddings.pt       # [N, n_aug, 2048] — augmented versions
+        clean_embeddings.pt     # [N, D] — val transforms, no augmentation
+        aug_embeddings.pt       # [N, n_aug, D] — augmented versions
         targets.pt              # [N, 5]
         image_ids.csv           # image_path → index mapping
         metadata.json           # config info for reproducibility
@@ -146,7 +175,7 @@ def extract_features_organized(df, model, save_dir='embeddings', n_aug=20, batch
     photometric_transform = get_photometric_transforms(img_size)
     
     # --- Extract clean embeddings (multiplier=1, val transforms) ---
-    print("Extracting CLEAN embeddings [N, 2048]...")
+    print("Extracting CLEAN embeddings...")
     dataset_clean = BiomassDatasetBase(
         df, transform=None, photometric_transform=None,
         img_dir=CFG.TRAIN_IMAGE_DIR, multiplier=1,
@@ -154,23 +183,21 @@ def extract_features_organized(df, model, save_dir='embeddings', n_aug=20, batch
     )
     loader_clean = DataLoader(dataset_clean, batch_size=batch_size, shuffle=False, num_workers=4)
     
-    clean_embeddings = torch.zeros(n_images, 2048)
-    idx = 0
+    all_clean = []
     with torch.no_grad(), torch.autocast(device_type='cuda', dtype=torch.bfloat16):
         for left, right, _ in tqdm(loader_clean, desc='Clean'):
             left, right = left.to(device), right.to(device)
             f_l = model(left)
             f_r = model(right)
             feats = torch.cat([f_l, f_r], dim=1).cpu()
-            n_batch = feats.shape[0]
-            clean_embeddings[idx:idx+n_batch] = feats
-            idx += n_batch
+            all_clean.append(feats)
     
+    clean_embeddings = torch.cat(all_clean)
     torch.save(clean_embeddings, os.path.join(save_dir, 'clean_embeddings.pt'))
     print(f"  Saved: {os.path.join(save_dir, 'clean_embeddings.pt')} ({clean_embeddings.shape})")
     
     # --- Extract augmented embeddings (multiplier=n_aug, train transforms) ---
-    print(f"Extracting {n_aug}× AUGMENTED embeddings [N, {n_aug}, 2048]...")
+    print(f"Extracting {n_aug}× AUGMENTED embeddings...")
     
     dataset_aug = BiomassDatasetBase(
         df, transform=spatial_transform, photometric_transform=photometric_transform,
@@ -179,20 +206,17 @@ def extract_features_organized(df, model, save_dir='embeddings', n_aug=20, batch
     )
     loader_aug = DataLoader(dataset_aug, batch_size=batch_size, shuffle=False, num_workers=4)
     
-    aug_embeddings = torch.zeros(n_images * n_aug, 2048)
-    idx = 0
-    # with torch.no_grad(), torch.autocast(device_type='cuda', dtype=torch.bfloat16):
-    #     for left, right, _ in tqdm(loader_aug, desc='Augmented'):
-    #         left, right = left.to(device), right.to(device)
-    #         f_l = model(left)
-    #         f_r = model(right)
-    #         feats = torch.cat([f_l, f_r], dim=1).cpu()
-    #         n_batch = feats.shape[0]
-    #         aug_embeddings[idx:idx+n_batch] = feats
-    #         idx += n_batch
+    all_aug = []
+    with torch.no_grad(), torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+        for left, right, _ in tqdm(loader_aug, desc='Augmented'):
+            left, right = left.to(device), right.to(device)
+            f_l = model(left)
+            f_r = model(right)
+            feats = torch.cat([f_l, f_r], dim=1).cpu()
+            all_aug.append(feats)
     
-    # aug_embeddings = aug_embeddings.view(n_images, n_aug, 2048)
-    # torch.save(aug_embeddings, os.path.join(save_dir, 'aug_embeddings.pt'))
+    aug_embeddings = torch.cat(all_aug).view(n_aug, n_images, -1).permute(1, 0, 2)
+    torch.save(aug_embeddings, os.path.join(save_dir, 'aug_embeddings.pt'))
     print(f"  Saved: {os.path.join(save_dir, 'aug_embeddings.pt')} ({aug_embeddings.shape})")
     
     # Save metadata
@@ -200,8 +224,8 @@ def extract_features_organized(df, model, save_dir='embeddings', n_aug=20, batch
         'n_images': n_images,
         'n_aug': n_aug,
         'img_size': img_size,
-        'embedding_dim': 2048,
-        'backbone': 'vit_large_patch16_dinov3',
+        'embedding_dim': clean_embeddings.shape[1],
+        'backbone': CFG.MODEL_NAME,
         'target_cols': list(CFG.ALL_TARGET_COLS),
     }
     with open(os.path.join(save_dir, 'metadata.json'), 'w') as f:
@@ -304,11 +328,12 @@ class EmbeddingAugmentationDataset(Dataset):
     """
     Dataset that samples augmented embeddings on-the-fly from compact single-file storage.
     
-    clean_embeddings.pt: [N, 2048] — val transforms
-    aug_embeddings.pt:   [N, n_aug, 2048] — augmented versions
+    clean_embeddings.pt: [N, D] — val transforms
+    aug_embeddings.pt:   [N, n_aug, D] — augmented versions
     
-    For training: randomly samples one of n_aug augmented versions per __getitem__ call.
-    For validation: always returns the clean embedding.
+    For training: randomly samples one of (1 clean + n_aug aug) versions per __getitem__ call,
+    matching the original image pipeline where copy 0 = clean and copies 1..n_aug = aug.
+    For validation: always returns the clean embedding (deterministic).
     """
     def __init__(self, indices, embed_dir, n_aug=20, is_train=True):
         self.indices = indices
@@ -328,8 +353,14 @@ class EmbeddingAugmentationDataset(Dataset):
     def __getitem__(self, idx):
         real_idx = self.indices[idx]
         if self.is_train and self.aug_embeddings is not None:
-            aug_idx = np.random.randint(0, self.n_aug)
-            feat = self.aug_embeddings[real_idx, aug_idx]
+            # Sample from 1 clean + n_aug augmented = n_aug + 1 total versions
+            # aug_idx == 0  → clean embedding
+            # aug_idx >= 1  → aug_embeddings[real_idx, aug_idx - 1]
+            aug_idx = np.random.randint(0, self.n_aug + 1)
+            if aug_idx == 0:
+                feat = self.clean_embeddings[real_idx]
+            else:
+                feat = self.aug_embeddings[real_idx, aug_idx - 1]
         else:
             feat = self.clean_embeddings[real_idx]
         target = self.targets[real_idx]

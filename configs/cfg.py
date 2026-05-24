@@ -9,7 +9,7 @@ class CFG:
     LOG             = False
 
     # TIMM
-    MODEL_NAME = 'vit_small_patch16_dinov3'
+    MODEL_NAME = 'vit_large_patch16_dinov3'
     PATIENCE     = 20
     
     # CLIP

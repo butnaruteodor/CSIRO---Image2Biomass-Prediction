@@ -1,6 +1,6 @@
 {
   "n_images": 357,
-  "n_aug": 20,
+  "n_aug": 15,
   "img_size": 1008,
   "embedding_dim": 2048,
   "backbone": "vit_large_patch16_dinov3",

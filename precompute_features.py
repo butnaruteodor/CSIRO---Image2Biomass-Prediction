@@ -19,6 +19,7 @@ Output:
 import torch
 import timm
 from dataset.preprocess_data import get_df, extract_features_organized
+from configs.cfg import *
 from configs.deterministic import set_seed
 import warnings
 warnings.filterwarnings('ignore')
@@ -33,7 +34,7 @@ def main():
     print(f"Loaded {len(df)} images")
     
     # 2. Load backbone (DINOv3 ViT-L/16)
-    model_name = 'vit_large_patch16_dinov3'
+    model_name = CFG.MODEL_NAME
     print(f"Loading backbone: {model_name}")
     backbone = timm.create_model(model_name, pretrained=True, num_classes=0)
     backbone = backbone.to(device)
@@ -41,8 +42,8 @@ def main():
     print(f"Backbone feature dim: {backbone.num_features}")
     
     # 3. Extract embeddings (uses CFG.IMG_SIZE for resize)
-    n_aug = 20
-    batch_size = 12  # Only 1 backbone forward per half, can fit large batches
+    n_aug = 15
+    batch_size = 8  # Only 1 backbone forward per half, can fit large batches
     
     save_dir = extract_features_organized(
         df=df,
