@@ -51,7 +51,7 @@ GRAD_ACC = 1
 N_FOLDS = 5
 N_AUG = 15
 
-SEEDS = [13]#, 21, 42, 87, 101]
+SEEDS = [13, 21, 42, 87, 101]
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # Read embedding dimension from metadata
 import json
@@ -110,23 +110,69 @@ def get_date_location_grouped_splits_weighted(df, seed):
     return list(sgkf.split(df, bins, groups=groups))
 
 def get_lopo_splits(df, seed):
-    """Leave-one-period-out splits.
-    Sort unique dates, split into Early/Middle/Late thirds, 
-    train on 2 periods, test on 1."""
+    """Leave-one-period-out splits with sample-balanced periods.
+    
+    Sorts unique dates chronologically, then accumulates ~1/3 of total
+    samples into each period. Each date belongs to EXACTLY one period
+    (no leakage). Prints a detailed report of the split.
+    """
     unique_dates = sorted(df['Sampling_Date'].unique())
-    n_dates = len(unique_dates)
-    split1 = n_dates // 3
-    split2 = 2 * n_dates // 3
+    total_samples = len(df)
+    target = total_samples // 3  # ~119
     
-    early_dates = set(unique_dates[:split1])
-    middle_dates = set(unique_dates[split1:split2])
-    late_dates = set(unique_dates[split2:])
+    # Accumulate dates into periods until we reach ~target samples each
+    period_dates = {'Early': [], 'Middle': [], 'Late': []}
+    period_names = ['Early', 'Middle', 'Late']
+    cumulative = 0
+    current_period_idx = 0
     
+    for i, d in enumerate(unique_dates):
+        count = len(df[df['Sampling_Date'] == d])
+        cumulative += count
+        period_dates[period_names[current_period_idx]].append(d)
+        
+        # Move to next period if we've accumulated enough samples
+        # AND there are still enough remaining dates for subsequent periods
+        if cumulative >= target and current_period_idx < 2:
+            remaining_dates = len(unique_dates) - i - 1
+            remaining_periods = 2 - current_period_idx
+            # Only move if at least 1 date remains per remaining period
+            if remaining_dates >= remaining_periods:
+                cumulative = 0
+                current_period_idx += 1
+    
+    # Build splits: held-out = 1 period, train = other 2
     splits = []
-    for held_out, name in [(early_dates, 'Early'), (middle_dates, 'Middle'), (late_dates, 'Late')]:
-        train_idx = df[~df['Sampling_Date'].isin(held_out)].index.values
-        val_idx = df[df['Sampling_Date'].isin(held_out)].index.values
+    for period_name in period_names:
+        held_out_dates = set(period_dates[period_name])
+        train_idx = df[~df['Sampling_Date'].isin(held_out_dates)].index.values
+        val_idx = df[df['Sampling_Date'].isin(held_out_dates)].index.values
         splits.append((train_idx, val_idx))
+    
+    # Print detailed report
+    print(f"\n  LOPO Split Report ({total_samples} total samples, {len(unique_dates)} dates):")
+    print(f"  {'Period':<10} {'Dates':<8} {'Samples':<10} {'Date Range':<28} {'States':<20} {'Groups':<10}")
+    print(f"  {'-'*76}")
+    for name in period_names:
+        dates = period_dates[name]
+        sub = df[df['Sampling_Date'].isin(dates)]
+        d0 = pd.Timestamp(dates[0]).strftime('%Y-%m-%d')
+        d1 = pd.Timestamp(dates[-1]).strftime('%Y-%m-%d')
+        states = sorted(sub['State'].unique())
+        groups = sub['group'].nunique()
+        print(f"  {name:<10} {len(dates):<8} {len(sub):<10} {d0} to {d1:<14} {str(states):<20} {groups:<10}")
+        for d in dates:
+            cnt = len(df[df['Sampling_Date'] == d])
+            state_str = str(sorted(df[df['Sampling_Date'] == d]['State'].unique()))
+            print(f"    {pd.Timestamp(d).strftime('%Y-%m-%d')}: {cnt} samples {state_str}")
+    
+    # Verify no date leakage
+    all_split_dates = set()
+    for name in period_names:
+        for d in period_dates[name]:
+            assert d not in all_split_dates, f"DUPLICATE DATE {d} in {name}!"
+            all_split_dates.add(d)
+    assert len(all_split_dates) == len(unique_dates), "Not all dates assigned!"
     
     return splits
 
@@ -144,27 +190,24 @@ def get_loso_splits(df, seed):
         n_val = len(val_idx)
         n_train = len(train_idx)
         val_fold = df.loc[val_idx]
-        # print(f"Leave-{state}-out | train:{n_train} val:{n_val} | "
-        #       f"Weighted_g:{val_fold['Weighted_g'].mean():.2f} | "
-        #       f"missions:{val_fold['group'].nunique()}")
     
     return splits
 
 SPLIT_STRATEGIES = {
-    'random_stratified': get_random_stratified_splits,
+    # 'random_stratified': get_random_stratified_splits,
     # 'date_grouped': get_date_grouped_splits,
-    'date_location_grouped': get_date_location_grouped_splits,
+    # 'date_location_grouped': get_date_location_grouped_splits,
     # 'date_location_grouped_splits_weighted' :get_date_location_grouped_splits_weighted,
-    # 'leave_one_period_out': get_lopo_splits,
+    'leave_one_period_out': get_lopo_splits,
     # 'leave_one_state_out': get_loso_splits
 }
 
 SPLIT_DISPLAY_NAMES = {
-    'random_stratified': 'Random stratified 5-fold CV',
+    # 'random_stratified': 'Random stratified 5-fold CV',
     # 'date_grouped': 'Date-grouped 5-fold CV',
-    'date_location_grouped': 'Date-location grouped 5-fold CV',
+    # 'date_location_grouped': 'Date-location grouped 5-fold CV',
     # 'date_location_grouped_splits_weighted': 'Date-location grouped 5-fold CV stratified by weighted targets',
-    # 'leave_one_period_out': 'Leave-one-period-out',
+    'leave_one_period_out': 'Leave-one-period-out',
     # 'leave_one_state_out': 'Leave-one-state-out'
 }
 
@@ -473,7 +516,7 @@ def run_experiment():
         all_results[protocol_name] = protocol_results
         
         per_rmse_avg = protocol_avg['per_rmse']
-        per_rmse_std = protocol_avg['std_per_rmse']
+        per_rmse_std = protocol_avg['std_per_rmse_across_seeds']
         print(f"\n  >>> {display_name}: "
               f"R2={protocol_avg['weighted_r2']:.4f}±{protocol_avg['std_weighted_r2']:.4f} | "
               f"Per-target RMSE: {', '.join(f'{v:.2f}±{s:.2f}' for v,s in zip(per_rmse_avg, per_rmse_std))}")
@@ -498,19 +541,22 @@ def run_experiment():
 # ============================================================
 
 def aggregate_fold_results(fold_results):
-    """Average metrics across folds for one seed."""
+    """Average metrics across folds for one seed.
+    
+    Uses sample standard deviation (ddof=1) consistently.
+    """
     aggregated = {}
     
     # Weighted R2 (scalar per fold)
     values = [r['weighted_r2'] for r in fold_results]
     aggregated['weighted_r2'] = np.mean(values)
-    aggregated['std_weighted_r2'] = np.std(values)
+    aggregated['std_weighted_r2'] = np.std(values, ddof=1)
     
     # Per-target metrics (arrays of shape (5,) per fold) → average as arrays
     for metric in ['per_rmse', 'per_mae', 'per_bias']:
         vals = np.stack([r[metric] for r in fold_results])  # (n_folds, 5)
         aggregated[metric] = vals.mean(axis=0)
-        aggregated[f'std_{metric}'] = vals.std(axis=0)
+        aggregated[f'std_{metric}'] = vals.std(axis=0, ddof=1)
     
     # Per-target R2
     per_target_keys = list(fold_results[0]['per_target_r2'].keys())
@@ -519,7 +565,7 @@ def aggregate_fold_results(fold_results):
     for tk in per_target_keys:
         vals = [r['per_target_r2'][tk] for r in fold_results]
         per_target_means[tk] = np.mean(vals)
-        per_target_stds[tk] = np.std(vals)
+        per_target_stds[tk] = np.std(vals, ddof=1)
     aggregated['per_target_r2'] = per_target_means
     aggregated['std_per_target_r2'] = per_target_stds
     
@@ -531,6 +577,7 @@ def aggregate_seed_results(seed_results):
     
     Each seed result is an OOF-based metric (computed on full 357-sample array).
     We compute mean ± std across seeds directly.
+    Uses sample standard deviation (ddof=1) consistently.
     """
     aggregated = {}
     
@@ -555,7 +602,7 @@ def aggregate_seed_results(seed_results):
     for tk in per_target_keys:
         vals = [r['per_target_r2'][tk] for r in seed_results]
         per_target_means[tk] = np.mean(vals)
-        per_target_stds[tk] = np.std(vals)
+        per_target_stds[tk] = np.std(vals, ddof=1)
     aggregated['per_target_r2'] = per_target_means
     aggregated['std_per_target_r2'] = per_target_stds
     
@@ -573,11 +620,11 @@ def generate_table_8(all_results):
     """
     rows = []
     protocol_order = [
-                      'random_stratified', 
+                    #   'random_stratified', 
                     #   'date_grouped',
-                      'date_location_grouped', 
+                    #   'date_location_grouped', 
                     #   'date_location_grouped_splits_weighted',
-                    #   'leave_one_period_out',
+                      'leave_one_period_out',
                     #   'leave_one_state_out'
                       ]
     
@@ -611,11 +658,11 @@ def generate_table_9(all_results, df):
     """
     rows = []
     protocol_order = [
-                      'random_stratified',
+                    #   'random_stratified',
                     #   'date_grouped',
-                      'date_location_grouped', 
+                    #   'date_location_grouped', 
                     #   'date_location_grouped_splits_weighted',
-                    #   'leave_one_period_out',
+                      'leave_one_period_out',
                     #   'leave_one_state_out'
                       ]
     target_map = {'Dry_Green_g': 'Target 1', 'Dry_Dead_g': 'Target 2', 

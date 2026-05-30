@@ -1,0 +1,4 @@
+Biomass range,Samples,Weighted R2,RMSE (Total),MAE (Total),Bias (Total)
+Low biomass,119,0.2912 ± 0.0743,8.88 ± 0.75,7.13 ± 0.60,4.565 ± 0.543
+Medium biomass,119,0.5177 ± 0.0459,11.12 ± 0.83,8.82 ± 0.49,1.470 ± 0.782
+High biomass,119,0.7187 ± 0.0250,20.05 ± 1.21,14.54 ± 0.98,-6.600 ± 0.857

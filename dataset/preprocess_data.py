@@ -76,6 +76,7 @@ def get_df():
     df_wide[col] * w for col, w in zip(CFG.ALL_TARGET_COLS, CFG.R2_WEIGHTS_VAL))
     
     # missions = df_wide.groupby('group').size().sort_values(ascending=False)
+    # print(missions)
     # print(f"Total missions: {len(missions)}")
     # print(f"Samples per mission — min: {missions.min()}, max: {missions.max()}, mean: {missions.mean():.1f}, median: {missions.median():.0f}")
     # print(missions)

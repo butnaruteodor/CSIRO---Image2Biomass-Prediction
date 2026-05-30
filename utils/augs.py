@@ -4,7 +4,7 @@ from albumentations.pytorch import ToTensorV2
 from configs.cfg import CFG
 
 def get_spatial_transforms(seed=CFG.SEED, size=None,):
-    """Spatial transforms applied IDENTICALLY to both image halves."""
+    """Spatial transforms applied INDEPENDENTLY to both image halves."""
     size = size or CFG.IMG_SIZE
     return A.Compose([
         A.Resize(size, size),

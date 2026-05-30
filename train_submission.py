@@ -78,7 +78,7 @@ def get_median_best_epoch(results_path):
 
     data = torch.load(results_path, map_location='cpu', weights_only=False)
 
-    proto = 'date_location_grouped'
+    proto = 'random_stratified'
     if proto not in data:
         for key in data:
             if 'fold_results' in data[key]:
