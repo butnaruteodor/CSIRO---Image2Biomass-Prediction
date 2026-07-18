@@ -18,20 +18,17 @@ warnings.filterwarnings('ignore')
 
 import numpy as np
 import pandas as pd
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.amp import autocast
-from torch.utils.data import Dataset, DataLoader
 from sklearn.model_selection import KFold, StratifiedKFold, GroupKFold, StratifiedGroupKFold
+from sklearn.multioutput import MultiOutputRegressor
+from sklearn.linear_model import RidgeCV
+from joblib import dump as jl_dump
 from tqdm import tqdm
 
-# Project modules
+# Light project modules (no torch/timm/albumentations chain)
 from configs.cfg import CFG
-from configs.deterministic import set_seed, seed_worker, get_generator
-from dataset.preprocess_data import check_splits, get_df, EmbeddingAugmentationDataset
-from models.models import BiomassSimpleMLP
-from utils.eval import global_weighted_r2_score, per_target_r2_score, weighted_biomass_loss
+from configs.deterministic import set_seed
+from dataset.preprocess_data import check_splits, get_df
+from utils.eval import global_weighted_r2_score, per_target_r2_score
 
 # ============================================================
 # CONFIGURATION (overriding CFG for PDF-specified params)
@@ -39,6 +36,12 @@ from utils.eval import global_weighted_r2_score, per_target_r2_score, weighted_b
 EMBED_DIR = 'embeddings'
 RESULTS_DIR = 'results/experiment_2'
 os.makedirs(RESULTS_DIR, exist_ok=True)
+
+# Model selection
+MODEL_TYPE = 'ridge'   # 'mlp' or 'ridge'
+
+# Ridge regression hyperparameters
+RIDGE_ALPHAS = [1e-3, 1e-2, 1e-1, 1, 10, 100, 1000]
 
 # Training params matching PDF spec
 LR = 1e-3
@@ -52,17 +55,29 @@ N_FOLDS = 5
 N_AUG = 15
 
 SEEDS = [13, 21, 42, 87, 101]
-DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
 # Read embedding dimension from metadata
-import json
 with open(os.path.join(EMBED_DIR, 'metadata.json')) as f:
     _meta = json.load(f)
 FEATURE_DIM = _meta['embedding_dim']
 print(f"Embedding dimension: {FEATURE_DIM}")
 
-# Weighted R2 weights (from CFG)
-R2_WEIGHTS = torch.tensor(CFG.R2_WEIGHTS_VAL, dtype=torch.float32, device=DEVICE)
 TARGET_NAMES = ['Dry_Green_g', 'Dry_Dead_g', 'Dry_Clover_g', 'GDM_g', 'Dry_Total_g']
+
+
+def _get_device():
+    """Lazy import for torch and get device."""
+    import torch
+    return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+
+def _load_embeddings(embed_dir):
+    """Lazy load torch for loading .pt files."""
+    import torch
+    targets = torch.load(os.path.join(embed_dir, 'targets.pt'))
+    clean_embeddings = torch.load(os.path.join(embed_dir, 'clean_embeddings.pt'))
+    return targets, clean_embeddings
+
 
 # ============================================================
 # SPLIT STRATEGIES
@@ -73,13 +88,12 @@ def get_random_stratified_splits(df, seed):
     bins = pd.qcut(df['Dry_Total_g'], q=5, labels=False)
     skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=seed)
 
-    check_splits(skf.split(df, bins),df)
+    check_splits(skf.split(df, bins), df)
     
     return list(skf.split(df, bins))
 
 def get_date_grouped_splits(df, seed):
     """Date-grouped 5-fold CV (unseen sampling dates)."""
-    # Use unique dates as groups. Stratify by Total biomass quantiles.
     dates = df['Sampling_Date'].astype(str)
     bins = pd.qcut(df['Dry_Total_g'], q=5, labels=False, duplicates='drop')
     sgkf = StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=seed)
@@ -89,9 +103,8 @@ def get_date_grouped_splits(df, seed):
     return list(sgkf.split(df, bins, groups=dates))
 
 def get_date_location_grouped_splits(df, seed):
-    """Date-location grouped 5-fold CV (unseen acquisition contexts).
-    This is the PRIMARY validation protocol per the PDF."""
-    groups = df['group']  # Already created in get_df() as State_Date
+    """Date-location grouped 5-fold CV (unseen acquisition contexts)."""
+    groups = df['group']
     bins = pd.qcut(df['Dry_Total_g'], q=5, labels=False, duplicates='drop')
     sgkf = StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=seed)
 
@@ -110,17 +123,11 @@ def get_date_location_grouped_splits_weighted(df, seed):
     return list(sgkf.split(df, bins, groups=groups))
 
 def get_lopo_splits(df, seed):
-    """Leave-one-period-out splits with sample-balanced periods.
-    
-    Sorts unique dates chronologically, then accumulates ~1/3 of total
-    samples into each period. Each date belongs to EXACTLY one period
-    (no leakage). Prints a detailed report of the split.
-    """
+    """Leave-one-period-out splits with sample-balanced periods."""
     unique_dates = sorted(df['Sampling_Date'].unique())
     total_samples = len(df)
-    target = total_samples // 3  # ~119
+    target = total_samples // 3
     
-    # Accumulate dates into periods until we reach ~target samples each
     period_dates = {'Early': [], 'Middle': [], 'Late': []}
     period_names = ['Early', 'Middle', 'Late']
     cumulative = 0
@@ -131,17 +138,13 @@ def get_lopo_splits(df, seed):
         cumulative += count
         period_dates[period_names[current_period_idx]].append(d)
         
-        # Move to next period if we've accumulated enough samples
-        # AND there are still enough remaining dates for subsequent periods
         if cumulative >= target and current_period_idx < 2:
             remaining_dates = len(unique_dates) - i - 1
             remaining_periods = 2 - current_period_idx
-            # Only move if at least 1 date remains per remaining period
             if remaining_dates >= remaining_periods:
                 cumulative = 0
                 current_period_idx += 1
     
-    # Build splits: held-out = 1 period, train = other 2
     splits = []
     for period_name in period_names:
         held_out_dates = set(period_dates[period_name])
@@ -149,7 +152,6 @@ def get_lopo_splits(df, seed):
         val_idx = df[df['Sampling_Date'].isin(held_out_dates)].index.values
         splits.append((train_idx, val_idx))
     
-    # Print detailed report
     print(f"\n  LOPO Split Report ({total_samples} total samples, {len(unique_dates)} dates):")
     print(f"  {'Period':<10} {'Dates':<8} {'Samples':<10} {'Date Range':<28} {'States':<20} {'Groups':<10}")
     print(f"  {'-'*76}")
@@ -166,7 +168,6 @@ def get_lopo_splits(df, seed):
             state_str = str(sorted(df[df['Sampling_Date'] == d]['State'].unique()))
             print(f"    {pd.Timestamp(d).strftime('%Y-%m-%d')}: {cnt} samples {state_str}")
     
-    # Verify no date leakage
     all_split_dates = set()
     for name in period_names:
         for d in period_dates[name]:
@@ -179,35 +180,27 @@ def get_lopo_splits(df, seed):
 def get_loso_splits(df, seed):
     """Leave-one-state-out: 4 fixed splits, no seeds needed."""
     splits = []
-    state_names = []
     for state in sorted(df['State'].unique()):
         val_idx   = df.index[df['State'] == state].tolist()
         train_idx = df.index[df['State'] != state].tolist()
         splits.append((train_idx, val_idx))
-        state_names.append(state)
-        
-        # reuse check_splits logic inline for visibility
-        n_val = len(val_idx)
-        n_train = len(train_idx)
-        val_fold = df.loc[val_idx]
-    
     return splits
 
 SPLIT_STRATEGIES = {
-    # 'random_stratified': get_random_stratified_splits,
-    # 'date_grouped': get_date_grouped_splits,
-    # 'date_location_grouped': get_date_location_grouped_splits,
+    'random_stratified': get_random_stratified_splits,
+    'date_grouped': get_date_grouped_splits,
+    'date_location_grouped': get_date_location_grouped_splits,
     # 'date_location_grouped_splits_weighted' :get_date_location_grouped_splits_weighted,
-    'leave_one_period_out': get_lopo_splits,
+    # 'leave_one_period_out': get_lopo_splits,
     # 'leave_one_state_out': get_loso_splits
 }
 
 SPLIT_DISPLAY_NAMES = {
-    # 'random_stratified': 'Random stratified 5-fold CV',
-    # 'date_grouped': 'Date-grouped 5-fold CV',
-    # 'date_location_grouped': 'Date-location grouped 5-fold CV',
+    'random_stratified': 'Random stratified 5-fold CV',
+    'date_grouped': 'Date-grouped 5-fold CV',
+    'date_location_grouped': 'Date-location grouped 5-fold CV',
     # 'date_location_grouped_splits_weighted': 'Date-location grouped 5-fold CV stratified by weighted targets',
-    'leave_one_period_out': 'Leave-one-period-out',
+    # 'leave_one_period_out': 'Leave-one-period-out',
     # 'leave_one_state_out': 'Leave-one-state-out'
 }
 
@@ -215,11 +208,31 @@ LOPO_PERIOD_NAMES = ['Early', 'Middle', 'Late']
 
 
 # ============================================================
-# TRAINING LOOP (adapted from train.py for precomputed features)
+# MLP TRAINING (lazy imports — torch etc. loaded on demand)
 # ============================================================
+
+def _mlp_imports():
+    """Lazy imports for MLP-only dependencies (torch, timm, albumentations chain)."""
+    import torch
+    import torch.nn as nn
+    import torch.nn.functional as F
+    from torch.amp import autocast
+    from torch.utils.data import DataLoader
+    from configs.deterministic import seed_worker, get_generator
+    from models.models import BiomassSimpleMLP
+    from utils.eval import weighted_biomass_loss
+    from dataset.preprocess_data import EmbeddingAugmentationDataset
+    return (torch, nn, F, autocast, DataLoader, seed_worker, get_generator,
+            BiomassSimpleMLP, weighted_biomass_loss, EmbeddingAugmentationDataset)
+
 
 def train_epoch_mlp(model, loader, optimizer, scaler):
     """One training epoch for MLP on precomputed features."""
+    torch = __import__('torch')
+    autocast = torch.amp.autocast
+    from utils.eval import weighted_biomass_loss
+    DEVICE = _get_device()
+    
     model.train()
     running_loss = 0.0
     optimizer.zero_grad()
@@ -246,9 +259,12 @@ def train_epoch_mlp(model, loader, optimizer, scaler):
     return running_loss / len(loader.dataset)
 
 
-@torch.no_grad()
 def valid_epoch_mlp(model, loader):
     """Validation epoch for MLP on precomputed features."""
+    torch = __import__('torch')
+    autocast = torch.amp.autocast
+    DEVICE = _get_device()
+    
     model.eval()
     all_preds = []
     all_labels = []
@@ -257,10 +273,9 @@ def valid_epoch_mlp(model, loader):
         feats = feats.to(DEVICE, non_blocking=True)
         targets = targets.to(DEVICE, non_blocking=True)
         
-        with autocast('cuda', dtype=torch.bfloat16):
+        with torch.no_grad(), autocast('cuda', dtype=torch.bfloat16):
             p_total, p_gdm, p_green, p_clover, p_dead = model(feats)
         
-        # Stack in correct order: Green, Dead, Clover, GDM, Total
         preds = torch.stack([p_green, p_dead, p_clover, p_gdm, p_total], dim=1).squeeze(-1)
         all_preds.append(preds.cpu())
         all_labels.append(targets.cpu())
@@ -271,11 +286,10 @@ def valid_epoch_mlp(model, loader):
     weighted_r2 = global_weighted_r2_score(all_labels, all_preds)
     per_target = per_target_r2_score(all_labels, all_preds)
     
-    # Compute unweighted per-target RMSE, MAE, Bias (scientific metrics)
     errors = all_preds - all_labels
-    per_rmse = np.sqrt(np.mean(errors**2, axis=0))    # shape (5,)
-    per_mae = np.mean(np.abs(errors), axis=0)          # shape (5,)
-    per_bias = np.mean(errors, axis=0)                 # shape (5,)
+    per_rmse = np.sqrt(np.mean(errors**2, axis=0))
+    per_mae = np.mean(np.abs(errors), axis=0)
+    per_bias = np.mean(errors, axis=0)
     
     return {
         'weighted_r2': weighted_r2,
@@ -288,21 +302,20 @@ def valid_epoch_mlp(model, loader):
     }
 
 
-def train_model(train_idx, val_idx, embed_dir, seed, fold_idx, protocol_name):
+def train_mlp_model(train_idx, val_idx, embed_dir, seed, fold_idx, protocol_name):
     """
     Train a single MLP model for one fold.
     Returns validation metrics and predictions (with val_idx for OOF assembly).
     Saves the best model checkpoint to results/{protocol_name}/fold_{fold}_seed_{seed}.pt
     """
+    (torch, nn, F, autocast, DataLoader, seed_worker, get_generator,
+     BiomassSimpleMLP, weighted_biomass_loss, EmbeddingAugmentationDataset) = _mlp_imports()
+    
+    DEVICE = _get_device()
     set_seed(seed, deterministic=True)
     
-    # Create datasets
-    train_set = EmbeddingAugmentationDataset(
-        train_idx, embed_dir, n_aug=N_AUG, is_train=False
-    )
-    val_set = EmbeddingAugmentationDataset(
-        val_idx, embed_dir, n_aug=N_AUG, is_train=False
-    )
+    train_set = EmbeddingAugmentationDataset(train_idx, embed_dir, n_aug=N_AUG, is_train=True)
+    val_set = EmbeddingAugmentationDataset(val_idx, embed_dir, n_aug=N_AUG, is_train=False)
     
     g = get_generator(seed)
     train_loader = DataLoader(
@@ -314,15 +327,10 @@ def train_model(train_idx, val_idx, embed_dir, seed, fold_idx, protocol_name):
         num_workers=4, pin_memory=True, worker_init_fn=seed_worker, generator=g
     )
     
-    # Build MLP model
     model = BiomassSimpleMLP(FEATURE_DIM).to(DEVICE)
     
     optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=WD)
-    
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=EPOCHS
-    )
-    
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS)
     scaler = torch.amp.GradScaler('cuda')
     
     best_metrics = None
@@ -349,17 +357,14 @@ def train_model(train_idx, val_idx, embed_dir, seed, fold_idx, protocol_name):
                 print(f'  Early stopping at epoch {epoch} (best: {best_score:.4f})')
                 break
     
-    # Store val_idx for OOF assembly — critical for correct metric computation
     best_metrics['val_idx'] = val_idx
     
-    # Save model checkpoint
     model_dir = os.path.join(RESULTS_DIR, protocol_name)
     os.makedirs(model_dir, exist_ok=True)
     ckpt_path = os.path.join(model_dir, f'fold_{fold_idx}_seed_{seed}.pt')
     torch.save(best_model_state, ckpt_path)
     print(f'  ✓ Model saved to {ckpt_path}')
     
-    # Cleanup
     del model, optimizer, train_loader, val_loader
     gc.collect()
     torch.cuda.empty_cache()
@@ -368,20 +373,75 @@ def train_model(train_idx, val_idx, embed_dir, seed, fold_idx, protocol_name):
 
 
 # ============================================================
-# OOF METRIC COMPUTATION (the correct way)
+# RIDGE TRAINING (minimal deps — only needs torch for .pt loading)
+# ============================================================
+
+def train_ridge_model(train_idx, val_idx, embed_dir, seed, fold_idx, protocol_name):
+    """
+    Train a Ridge regression model for one fold.
+    Uses clean embeddings only (no augmentation) and MultiOutputRegressor(RidgeCV).
+    Saves the model to results/{protocol_name}/fold_{fold}_seed_{seed}.joblib.
+    Returns validation metrics in the same format as train_mlp_model.
+    """
+    set_seed(seed, deterministic=True)
+    
+    targets, clean_embeddings = _load_embeddings(embed_dir)
+    
+    train_feats = clean_embeddings[train_idx].numpy()
+    train_targets = targets[train_idx].numpy()
+    val_feats = clean_embeddings[val_idx].numpy()
+    val_targets = targets[val_idx].numpy()
+    
+    ridge = MultiOutputRegressor(RidgeCV(alphas=RIDGE_ALPHAS))
+    ridge.fit(train_feats, train_targets)
+    
+    # Save the trained Ridge model
+    model_dir = os.path.join(RESULTS_DIR, protocol_name)
+    os.makedirs(model_dir, exist_ok=True)
+    model_path = os.path.join(model_dir, f'fold_{fold_idx}_seed_{seed}.joblib')
+    jl_dump(ridge, model_path)
+    print(f'  ✓ Model saved to {model_path}')
+    
+    val_preds = ridge.predict(val_feats)
+    
+    weighted_r2 = global_weighted_r2_score(val_targets, val_preds)
+    per_target = per_target_r2_score(val_targets, val_preds)
+    
+    errors = val_preds - val_targets
+    per_rmse = np.sqrt(np.mean(errors**2, axis=0))
+    per_mae = np.mean(np.abs(errors), axis=0)
+    per_bias = np.mean(errors, axis=0)
+    
+    return {
+        'weighted_r2': weighted_r2,
+        'per_target_r2': per_target,
+        'per_rmse': per_rmse,
+        'per_mae': per_mae,
+        'per_bias': per_bias,
+        'preds': val_preds,
+        'targets': val_targets,
+        'val_idx': val_idx,
+    }
+
+
+def train_model(train_idx, val_idx, embed_dir, seed, fold_idx, protocol_name):
+    """
+    Dispatch to the appropriate model training function based on MODEL_TYPE.
+    """
+    if MODEL_TYPE == 'ridge':
+        return train_ridge_model(train_idx, val_idx, embed_dir, seed, fold_idx, protocol_name)
+    else:
+        return train_mlp_model(train_idx, val_idx, embed_dir, seed, fold_idx, protocol_name)
+
+
+# ============================================================
+# OOF METRIC COMPUTATION
 # ============================================================
 
 def assemble_oof(fold_results, n_total):
     """
     Assemble the complete OOF prediction array from fold-wise results.
-    
-    Each fold's best model produces predictions for its validation subset.
-    Concatenating all fold predictions gives a single (n_total, 5) array
-    where EVERY sample has exactly one prediction — its OOF prediction.
-    
-    This is the ONLY correct way to compute metrics for CV.
     """
-    # Allocate full arrays — fill in using val_idx from each fold
     n_targets = fold_results[0]['preds'].shape[1]
     oof_preds = np.full((n_total, n_targets), np.nan)
     oof_targets = np.full((n_total, n_targets), np.nan)
@@ -391,7 +451,6 @@ def assemble_oof(fold_results, n_total):
         oof_preds[val_idx] = fr['preds']
         oof_targets[val_idx] = fr['targets']
     
-    # Verify no missing samples
     missing = np.isnan(oof_preds).any(axis=1)
     if missing.any():
         n_missing = missing.sum()
@@ -404,24 +463,14 @@ def assemble_oof(fold_results, n_total):
 def compute_oof_metrics(oof_preds, oof_targets):
     """
     Compute ALL metrics on the FULL OOF array (357, 5).
-    
-    Args:
-        oof_preds:   (n_total, 5) — Green, Dead, Clover, GDM, Total
-        oof_targets: (n_total, 5) — same order
-    
-    Returns dict with weighted R2, per-target R2, RMSE, MAE, Bias.
     """
-    # Weighted R2 on full OOF
     weighted_r2 = global_weighted_r2_score(oof_targets, oof_preds)
-    
-    # Per-target R2 on full OOF
     per_target_r2 = per_target_r2_score(oof_targets, oof_preds)
     
-    # Per-target RMSE, MAE, Bias on full OOF
     errors = oof_preds - oof_targets
-    per_rmse = np.sqrt(np.mean(errors**2, axis=0))  # (5,)
-    per_mae = np.mean(np.abs(errors), axis=0)        # (5,)
-    per_bias = np.mean(errors, axis=0)               # (5,)
+    per_rmse = np.sqrt(np.mean(errors**2, axis=0))
+    per_mae = np.mean(np.abs(errors), axis=0)
+    per_bias = np.mean(errors, axis=0)
     
     return {
         'weighted_r2': weighted_r2,
@@ -443,13 +492,12 @@ def run_experiment():
     
     print("=" * 80)
     print("EXPERIMENT 2: Validation Protocol Comparison")
+    print(f"Model: {MODEL_TYPE}")
     print("=" * 80)
     
-    # Load data
     df = get_df()
     print(f"Loaded {len(df)} images\n")
     
-    # Store all results
     all_results = {}
     
     for protocol_name, split_fn in SPLIT_STRATEGIES.items():
@@ -467,7 +515,6 @@ def run_experiment():
         for seed_idx, seed in enumerate(SEEDS):
             print(f"\n  --- Seed {seed} ({seed_idx+1}/{len(SEEDS)}) ---")
             
-            # Generate splits
             splits = split_fn(df, seed)
             n_splits = len(splits)
             
@@ -493,14 +540,12 @@ def run_experiment():
                         print(" |", end="")
                 print()
             
-            # ── Compute OOF metrics on FULL concatenated array ──
             oof_preds, oof_targets = assemble_oof(seed_fold_results, len(df))
             
             if oof_preds is not None:
                 oof_metrics = compute_oof_metrics(oof_preds, oof_targets)
                 oof_metrics['seed'] = seed
             else:
-                # Fallback: average fold-level metrics (less accurate)
                 print("  WARNING: Could not assemble OOF array, using fold averages")
                 oof_metrics = aggregate_fold_results(seed_fold_results)
                 oof_metrics['seed'] = seed
@@ -510,7 +555,6 @@ def run_experiment():
             
             print(f"  Seed {seed} OOF: Weighted R2={oof_metrics['weighted_r2']:.4f}")
         
-        # Aggregate across seeds
         protocol_avg = aggregate_seed_results(protocol_results['seed_results'])
         protocol_results['aggregated'] = protocol_avg
         all_results[protocol_name] = protocol_results
@@ -521,12 +565,12 @@ def run_experiment():
               f"R2={protocol_avg['weighted_r2']:.4f}±{protocol_avg['std_weighted_r2']:.4f} | "
               f"Per-target RMSE: {', '.join(f'{v:.2f}±{s:.2f}' for v,s in zip(per_rmse_avg, per_rmse_std))}")
     
-    # Save results
+    # Save results using torch (lazy import)
+    import torch as _torch
     save_path = os.path.join(RESULTS_DIR, 'full_results.pt')
-    torch.save(all_results, save_path)
+    _torch.save(all_results, save_path)
     print(f"\nFull results saved to {save_path}")
     
-    # Generate tables
     generate_table_8(all_results)
     generate_table_9(all_results, df)
     generate_table_10(all_results, df)
@@ -541,24 +585,18 @@ def run_experiment():
 # ============================================================
 
 def aggregate_fold_results(fold_results):
-    """Average metrics across folds for one seed.
-    
-    Uses sample standard deviation (ddof=1) consistently.
-    """
+    """Average metrics across folds for one seed."""
     aggregated = {}
     
-    # Weighted R2 (scalar per fold)
     values = [r['weighted_r2'] for r in fold_results]
     aggregated['weighted_r2'] = np.mean(values)
     aggregated['std_weighted_r2'] = np.std(values, ddof=1)
     
-    # Per-target metrics (arrays of shape (5,) per fold) → average as arrays
     for metric in ['per_rmse', 'per_mae', 'per_bias']:
-        vals = np.stack([r[metric] for r in fold_results])  # (n_folds, 5)
+        vals = np.stack([r[metric] for r in fold_results])
         aggregated[metric] = vals.mean(axis=0)
         aggregated[f'std_{metric}'] = vals.std(axis=0, ddof=1)
     
-    # Per-target R2
     per_target_keys = list(fold_results[0]['per_target_r2'].keys())
     per_target_means = {}
     per_target_stds = {}
@@ -573,29 +611,20 @@ def aggregate_fold_results(fold_results):
 
 
 def aggregate_seed_results(seed_results):
-    """Average metrics across seeds.
-    
-    Each seed result is an OOF-based metric (computed on full 357-sample array).
-    We compute mean ± std across seeds directly.
-    Uses sample standard deviation (ddof=1) consistently.
-    """
+    """Average metrics across seeds."""
     aggregated = {}
     
-    # Weighted R2 (scalar per seed)
     values = [r['weighted_r2'] for r in seed_results]
     aggregated['weighted_r2'] = np.mean(values)
     aggregated['std_weighted_r2'] = np.std(values, ddof=1)
     
-    # Per-target metrics (arrays of shape (5,)) → stack and average
     for metric in ['per_rmse', 'per_mae', 'per_bias']:
-        vals = np.stack([r[metric] for r in seed_results])   # (n_seeds, 5)
-        aggregated[metric] = vals.mean(axis=0)                # (5,)
-        aggregated[f'std_{metric}_across_seeds'] = vals.std(axis=0, ddof=1)  # (5,)
-        # Also average the intra-seed stds
+        vals = np.stack([r[metric] for r in seed_results])
+        aggregated[metric] = vals.mean(axis=0)
+        aggregated[f'std_{metric}_across_seeds'] = vals.std(axis=0, ddof=1)
         intra_std_vals = np.stack([r.get(f'std_{metric}', np.zeros(5)) for r in seed_results])
         aggregated[f'std_{metric}'] = intra_std_vals.mean(axis=0)
     
-    # Per-target R2 across seeds
     per_target_keys = list(seed_results[0]['per_target_r2'].keys())
     per_target_means = {}
     per_target_stds = {}
@@ -614,23 +643,20 @@ def aggregate_seed_results(seed_results):
 # ============================================================
 
 def generate_table_8(all_results):
-    """
-    Table 8: Effect of validation protocol on local performance estimates.
-    Columns: Protocol, Local weighted R2↑, Std, Local RMSE↓, Local MAE↓, Distance to hidden↓
-    """
+    """Table 8: Effect of validation protocol on local performance estimates."""
     rows = []
     protocol_order = [
-                    #   'random_stratified', 
-                    #   'date_grouped',
-                    #   'date_location_grouped', 
+                       'random_stratified', 
+                       'date_grouped',
+                       'date_location_grouped', 
                     #   'date_location_grouped_splits_weighted',
-                      'leave_one_period_out',
+                    #   'leave_one_period_out',
                     #   'leave_one_state_out'
                       ]
     
     for protocol in protocol_order:
         agg = all_results[protocol]['aggregated']
-        agg_per_rmse = agg['per_rmse']  # shape (5,) — Green, Dead, Clover, GDM, Total
+        agg_per_rmse = agg['per_rmse']
         agg_per_mae = agg['per_mae']
         rows.append({
             'Validation protocol': SPLIT_DISPLAY_NAMES[protocol],
@@ -638,7 +664,7 @@ def generate_table_8(all_results):
             'Std': f"{agg['std_weighted_r2']:.4f}",
             'Local RMSE ↓ (Total)': f"{agg_per_rmse[4]:.2f}",
             'Local MAE ↓ (Total)': f"{agg_per_mae[4]:.2f}",
-            'Distance to hidden ↓': 'TBD',  # Requires Kaggle submission
+            'Distance to hidden ↓': 'TBD',
         })
     
     df = pd.DataFrame(rows)
@@ -653,16 +679,14 @@ def generate_table_8(all_results):
 
 
 def generate_table_9(all_results, df):
-    """
-    Table 9: Per-target R2 under different validation protocols.
-    """
+    """Table 9: Per-target R2 under different validation protocols."""
     rows = []
     protocol_order = [
-                    #   'random_stratified',
-                    #   'date_grouped',
-                    #   'date_location_grouped', 
+                       'random_stratified', 
+                       'date_grouped',
+                       'date_location_grouped', 
                     #   'date_location_grouped_splits_weighted',
-                      'leave_one_period_out',
+                    #   'leave_one_period_out',
                     #   'leave_one_state_out'
                       ]
     target_map = {'Dry_Green_g': 'Target 1', 'Dry_Dead_g': 'Target 2', 
@@ -689,20 +713,14 @@ def generate_table_9(all_results, df):
 
 
 def generate_table_10(all_results, df):
-    """
-    Table 10: Leave-one-period-out temporal generalization.
-    Extracts per-period results from the LOPO protocol.
-    """
+    """Table 10: Leave-one-period-out temporal generalization."""
     lopo_results = all_results.get('leave_one_period_out')
     if lopo_results is None:
         return
     
-    # Extract per-fold results which correspond to periods
-    # Fold 0 = Early held out, Fold 1 = Middle, Fold 2 = Late
     fold_results_by_seed = {}
     for seed_result in lopo_results['seed_results']:
         seed = seed_result['seed']
-        # Re-extract from fold results
         for fr in lopo_results['fold_results']:
             if fr['seed'] == seed:
                 fold_idx = fr['fold']
@@ -710,9 +728,7 @@ def generate_table_10(all_results, df):
                     fold_results_by_seed[fold_idx] = []
                 fold_results_by_seed[fold_idx].append(fr)
     
-    # Helper to get Total-target (index 4) metric from per-target arrays
     def _total_metric(fr, key):
-        """Extract the Dry_Total (index 4) entry from a per-target array."""
         return fr[key][4]
     
     rows = []
@@ -735,7 +751,6 @@ def generate_table_10(all_results, df):
             'Bias': f"{np.mean(period_biases):.3f}",
         })
     
-    # Add mean/std rows (across all periods)
     all_fr = [r for fr_list in fold_results_by_seed.values() for r in fr_list]
     all_period_r2s = [r['weighted_r2'] for r in all_fr]
     all_period_rmses = [_total_metric(r, 'per_rmse') for r in all_fr]
@@ -771,9 +786,7 @@ def generate_table_10(all_results, df):
 
 
 def generate_table_11(all_results, df):
-    """
-    Table 11: Per-target R2 for leave-one-period-out.
-    """
+    """Table 11: Per-target R2 for leave-one-period-out."""
     lopo_results = all_results.get('leave_one_period_out')
     if lopo_results is None:
         return
@@ -782,7 +795,6 @@ def generate_table_11(all_results, df):
     target_map = {'Dry_Green_g': 'Target 1', 'Dry_Dead_g': 'Target 2',
                   'Dry_Clover_g': 'Target 3', 'GDM_g': 'Target 4', 'Dry_Total_g': 'Target 5'}
     
-    # Group fold results by period
     fold_results_by_period = {}
     for fr in lopo_results['fold_results']:
         period = LOPO_PERIOD_NAMES[fr['fold']]

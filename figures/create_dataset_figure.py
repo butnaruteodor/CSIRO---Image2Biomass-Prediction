@@ -89,6 +89,18 @@ target_labels = [
     'Dry\nTotal',
 ]
 
+# Print target distribution statistics
+print("\nTarget distribution statistics (n = {}):".format(len(img_data)))
+print(f"{'Target':<15} {'Mean':>8} {'Std':>8} {'Min':>8} {'Q1':>8} {'Median':>8} {'Q3':>8} {'Max':>8} {'Nonzero':>8}")
+print("-" * 88)
+for col, label in zip(target_cols, ['Green', 'Dead', 'Clover', 'GDM', 'Total']):
+    vals = img_data[col].values
+    nonzero = np.sum(vals > 0)
+    print(f"{label:<15} {np.mean(vals):>8.2f} {np.std(vals):>8.2f} {np.min(vals):>8.2f} "
+          f"{np.percentile(vals, 25):>8.2f} {np.median(vals):>8.2f} {np.percentile(vals, 75):>8.2f} "
+          f"{np.max(vals):>8.2f} {nonzero:>8} ({nonzero/len(vals)*100:.0f}%)")
+print()
+
 # ── Panel (c): Temporal structure (monthly bins) ─────────────────────
 # LOPO boundaries — sample-balanced split (same logic as experiment_2.py)
 date_order = sorted(df['Date'].unique())
