@@ -1,0 +1,4 @@
+Validation protocol,Local weighted R2 ↑,Std,Local RMSE ↓ (Total),Local MAE ↓ (Total),Distance to hidden ↓
+Random stratified 5-fold CV,0.8145,0.0085,14.17,10.17,TBD
+Date-grouped 5-fold CV,0.7345,0.0082,16.41,12.35,TBD
+Date-location grouped 5-fold CV,0.7487,0.0191,15.92,12.03,TBD

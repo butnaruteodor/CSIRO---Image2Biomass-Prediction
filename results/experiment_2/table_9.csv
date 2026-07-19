@@ -1,4 +1,4 @@
 Validation protocol,Target 1,Target 2,Target 3,Target 4,Target 5,Weighted R2
-Random stratified 5-fold CV,0.8158,0.5312,0.7664,0.7917,0.7429,0.8145
-Date-grouped 5-fold CV,0.6877,0.3023,0.5812,0.6681,0.6550,0.7345
-Date-location grouped 5-fold CV,0.6994,0.3464,0.5721,0.6870,0.6749,0.7487
+Random stratified 5-fold CV,0.8343,0.5608,0.7996,0.8077,0.7858,0.8405
+Date-grouped 5-fold CV,0.7283,0.3488,0.6409,0.7031,0.7405,0.7868
+Date-location grouped 5-fold CV,0.7433,0.3428,0.6525,0.7415,0.7386,0.7931
