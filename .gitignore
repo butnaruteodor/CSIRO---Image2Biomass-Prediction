@@ -7,5 +7,6 @@ csiro-biomass/train/*
 *.pt
 *.pth
 *.joblib
+*.jpg
 *.pyc
 __pycache__/
