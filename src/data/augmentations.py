@@ -46,9 +46,9 @@ def get_val_transforms(size=1008, seed=42):
 # TTA transforms for inference
 # ============================================================================
 
-def get_tta_transforms(img_size=768):
+def get_tta_transforms(img_size=1008):
     """
-    Returns 3 TTA transforms: original, HFlip, VFlip.
+    Returns 5 TTA transforms: original, HFlip, VFlip.
     All include resize + normalize (no augmentations).
     """
     base = [
@@ -60,11 +60,13 @@ def get_tta_transforms(img_size=768):
         A.Compose([A.Resize(img_size, img_size)] + base),
         A.Compose([A.Resize(img_size, img_size), A.HorizontalFlip(p=1.0)] + base),
         A.Compose([A.Resize(img_size, img_size), A.VerticalFlip(p=1.0)] + base),
+        A.Compose([A.Resize(img_size, img_size), A.HorizontalFlip(p=1.0), A.VerticalFlip(p=1.0)] + base),
+        A.Compose([A.Resize(img_size, img_size), A.Transpose(p=1.0)] + base),
     ]
     return transforms
 
 
-def get_val_transform_for_inference(img_size=768):
+def get_val_transform_for_inference(img_size=1008):
     """Simple val transform for inference (no TTA)."""
     return A.Compose([
         A.Resize(img_size, img_size),

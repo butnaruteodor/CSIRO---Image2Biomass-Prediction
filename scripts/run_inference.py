@@ -27,7 +27,7 @@ def main():
     config = InferenceConfig()
     config.img_size = args.img_size
     config.batch_size = args.batch_size
-    config.display_info()
+    print(f"Inference config: img_size={config.img_size}, batch_size={config.batch_size}, device={config.device}")
 
     pipeline = InferencePipeline(config)
     pipeline.run()

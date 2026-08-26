@@ -49,7 +49,7 @@ def check_splits(splitter, df):
         val_mean_gdm = val_fold['GDM_g'].mean()
         val_mean_weighted = sum(
             val_fold[col] * w for col, w in zip(CFG.ALL_TARGET_COLS, CFG.R2_WEIGHTS_VAL)
-        )
+        ).mean()
 
         state_counts = val_fold['State'].value_counts().to_dict()
         n_missions = val_fold['group'].nunique()

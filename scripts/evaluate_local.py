@@ -76,7 +76,7 @@ def main():
                                if f.startswith("ridge_")])
         if not ridge_files:
             print(f"ERROR: No models found in {model_dir}!")
-            print(f"Run: python experiments/train_submission.py")
+            print(f"Run: python scripts/train_model.py --head mlp")
             sys.exit(1)
         use_mlp = False
     else:

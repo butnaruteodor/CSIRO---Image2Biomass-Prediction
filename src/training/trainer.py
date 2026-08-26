@@ -86,8 +86,8 @@ def valid_epoch_mlp(model, loader, device=DEVICE):
         running_loss += loss.item() * feats.size(0)
 
         preds = torch.stack([
-            p_green.squeeze(), p_dead.squeeze(),
-            p_clover.squeeze(), p_gdm.squeeze(), p_total.squeeze()
+            p_green.squeeze(-1), p_dead.squeeze(-1),
+            p_clover.squeeze(-1), p_gdm.squeeze(-1), p_total.squeeze(-1)
         ], dim=1)
         preds_list.append(preds.cpu().float().numpy())
         labels_list.append(targets.cpu().float().numpy())
