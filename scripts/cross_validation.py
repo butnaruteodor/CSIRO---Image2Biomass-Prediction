@@ -25,7 +25,6 @@ from src.deterministic import set_seed, seed_worker, get_generator
 from src.data.preprocessing import get_df, get_random_stratified_splits, get_date_grouped_splits, get_date_location_grouped_splits
 from src.data.dataset import EmbeddingAugmentationDataset
 from src.models.factory import HeadFactory
-from src.training.loss import weighted_biomass_loss
 from src.evaluation.metrics import global_weighted_r2_score, per_target_r2_score, TARGET_NAMES
 from src.training.trainer import train_epoch_mlp, valid_epoch_mlp
 
@@ -101,11 +100,7 @@ def cv_seed_mlp(df, splits, seed):
     return fold_results
 
 def cv_seed_ridge(df, splits, seed):
-    """Run 5-fold CV for one seed using Ridge head."""
-    from sklearn.linear_model import Ridge
-    from sklearn.multioutput import MultiOutputRegressor
-    import joblib
-
+    """Run 5-fold CV for one seed using Ridge head (RidgeCV alpha selection)."""
     set_seed(seed, deterministic=True)
     fold_results = []
 
@@ -129,18 +124,22 @@ def cv_seed_ridge(df, splits, seed):
         X_train = np.concatenate(X_train); y_train = np.concatenate(y_train)
         X_val = np.concatenate(X_val); y_val = np.concatenate(y_val)
 
-        model = MultiOutputRegressor(Ridge(alpha=1.0)).fit(X_train, y_train)
+        model = HeadFactory.create("ridge")
+        model.fit(X_train, y_train)
         preds = model.predict(X_val)
         r2 = global_weighted_r2_score(y_val, preds)
+        # RidgeCV-selected regularization strength per target
+        selected_alphas = [float(est.alpha_) for est in model.estimators_]
 
         fold_results.append({
             "fold": fold_idx, "best_epoch": 0,
             "weighted_r2": float(r2),
+            "selected_alphas": selected_alphas,
             "preds": preds.tolist(),
             "targets": y_val.tolist(),
             "train_idx": train_idx.tolist(), "val_idx": val_idx.tolist(),
         })
-        print(f"    Weighted R2 = {r2:.4f}")
+        print(f"    Weighted R2 = {r2:.4f} | alphas = {selected_alphas}")
 
     return fold_results
 

@@ -250,6 +250,67 @@ def get_date_location_grouped_splits(df, seed):
     return list(sgkf.split(df, bins, groups=groups))
 
 
+def get_lopo_splits(df, year=2015):
+    """
+    Leave-One-Period-Out (LOPO) splits for temporal analysis.
+
+    The data from `year` are divided into three consecutive, sample-balanced
+    temporal periods (early / middle / late). Each period is held out once
+    as the test set while the remaining periods are used for training.
+
+    Returns:
+        (splits, period_info)
+        splits: list of (train_idx, test_idx) positional-index tuples,
+                ordered [early, middle, late]; indices refer to positions
+                in the full dataframe (and therefore in the embedding arrays).
+        period_info: list of dicts with date ranges and sample counts.
+    """
+    year_mask = df['Sampling_Date'].dt.year == year
+    year_positions = np.where(year_mask.values)[0]
+    df_year = df[year_mask].reset_index(drop=True)
+
+    date_order = sorted(df_year['Sampling_Date'].unique())
+    period_names = ['early', 'middle', 'late']
+    period_of_date = {}
+
+    total = len(df_year)
+    target = total // 3
+    cumulative = 0
+    current = 0
+    for i, d in enumerate(date_order):
+        count = int((df_year['Sampling_Date'] == d).sum())
+        cumulative += count
+        period_of_date[d] = period_names[current]
+        if cumulative >= target and current < 2:
+            remaining_dates = len(date_order) - i - 1
+            remaining_periods = 2 - current
+            if remaining_dates >= remaining_periods:
+                cumulative = 0
+                current += 1
+
+    df_year['period'] = df_year['Sampling_Date'].map(period_of_date)
+
+    splits = []
+    period_info = []
+    for period in period_names:
+        test_positions = year_positions[(df_year['period'] == period).values]
+        train_positions = np.setdiff1d(year_positions, test_positions)
+        splits.append((train_positions, test_positions))
+
+        dates_p = df_year.loc[df_year['period'] == period, 'Sampling_Date']
+        period_info.append({
+            'period': period,
+            'start': str(dates_p.min().date()),
+            'end': str(dates_p.max().date()),
+            'n_dates': int(dates_p.nunique()),
+            'n_images': int(len(test_positions)),
+        })
+        print(f"LOPO period '{period}': {period_info[-1]['start']} to "
+              f"{period_info[-1]['end']} ({period_info[-1]['n_images']} images)")
+
+    return splits, period_info
+
+
 # ============================================================================
 # Embedding helpers
 # ============================================================================

@@ -11,9 +11,9 @@
 │ │ L  │ R  ││     │ → [CLS] 1024-d       │ ──► │ │ GDM Head           │──►│
 │ └────┴────┘│     │                      │     │ │ Green Head         │──►│
 │            │     │ Right crop 1008²     │     │ │ Clover Head        │──►│
-│            │     │ → DINOv3             │     │ └────────────────────┘   │
-│            │     │ → [CLS] 1024-d       │     │                          │
-└────────────┘     └──────────────────────┘     │ Dead = Total − GDM       │
+│            │     │ → DINOv3             │     │ │ Dead Head          │──►│
+│            │     │ → [CLS] 1024-d       │     │ └────────────────────┘   │
+└────────────┘     └──────────────────────┘     │                          │
                          │                       └──────────────────────────┘
                     ┌────▼────┐
                     │ Concat  │
@@ -37,22 +37,21 @@ features = model(left_crop, right_crop)  # → [B, 2048]
 
 ## MLP Head (`src/models/heads.py`)
 
-`BiomassSimpleMLP` has 4 parallel regression heads:
+`BiomassSimpleMLP` has 5 independent regression branches (one per biomass component):
 
 ```python
 model = BiomassSimpleMLP(feature_dim=2048)
 p_total, p_gdm, p_green, p_clover, p_dead = model(features)
 ```
 
-Each head:
+Each branch:
 ```
 Linear(2048 → 1024) → GELU → Dropout(0.3) → Linear(1024 → 512) → GELU → Dropout(0.3) → Linear(512 → 1) → Softplus
 ```
 
 Key properties:
-- **Softplus activation**: Ensures non-negative predictions
-- **Derived Dead**: `p_dead = p_total − p_gdm` enforces the physical constraint
-- **4 heads instead of 5**: Dead is derived, reducing parameters and enforcing consistency
+- **Five independent branches**: Total, GDM, Green, Clover, Dead — each target gets its own head
+- **Softplus activation**: Ensures non-negative predictions on every branch
 
 ## Head Factory (`src/models/factory.py`)
 
@@ -63,14 +62,13 @@ Key properties:
 model = HeadFactory.create("mlp", feature_dim=2048, device=device)
 
 # Ridge head (sklearn)
-model = HeadFactory.create("ridge", alpha=1.0)
+model = HeadFactory.create("ridge")
 ```
 
 ## Ridge Head
 
-Uses `sklearn.multioutput.MultiOutputRegressor(Ridge(alpha=1.0))`. Faster to train but typically lower performance than MLP. Does not enforce the composition constraint.
+Uses `sklearn.multioutput.MultiOutputRegressor(RidgeCV(alphas=[1e-3, 1e-2, 1e-1, 1, 10, 100, 1000]))`: one RidgeCV regressor per target, with the regularization strength selected by internal cross-validation. Faster to train but typically lower performance than MLP.
 
 ## Legacy Models
 
-- `BiomassModelMLP` — Combined backbone + MLP (useful for end-to-end fine-tuning)
-- `PerceiverResampler` — Alternative attention-based pooling (not used in primary pipeline)
+This module previously contained experimental architectures (Perceiver-style resamplers, ConvNeXt blocks, a combined backbone+MLP model). They were removed as unused; the git history retains them.

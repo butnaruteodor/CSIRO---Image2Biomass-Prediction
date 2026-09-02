@@ -1,0 +1,6 @@
+Held-out period,Weighted R2,RMSE (Dry_Total_g),MAE (Dry_Total_g),Bias (Dry_Total_g)
+Early,0.576,21.61,18.10,11.395
+Middle,0.558,13.68,11.18,2.764
+Late,0.670,21.84,15.17,-6.028
+Mean,0.601,19.04,14.82,2.710
+Std,0.060,4.65,3.47,8.712

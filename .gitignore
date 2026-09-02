@@ -1,12 +1,39 @@
+# Environment
 venv/
-deepavance/
-out/
-convnext-exp1/
+.venv/
 wandb/
+.pytest_cache/
+
+# Python
+__pycache__/
+*.pyc
+
+# Dataset (download from the Kaggle competition; keep only the small CSVs in git)
 csiro-biomass/train/*
-*.pt
+csiro-biomass/test/*
+!csiro-biomass/train.csv
+!csiro-biomass/test.csv
+!csiro-biomass/sample_submission.csv
+
+# Precomputed embeddings and model checkpoints (regenerable artifacts)
+embeddings/*.pt
+embeddings/test_image_ids.csv
+embeddings/image_ids.csv
+embeddings/test_checkpoint.txt
+results/**/*.pt
 *.pth
 *.joblib
-*.jpg
-*.pyc
-__pycache__/
+out/
+deepavance/
+convnext-exp1/
+
+# Generated figures (rebuild with figures/*.py)
+figures/*.pdf
+figures/*.png
+
+# Outputs
+submission*.csv
+
+# Scratch / logs
+*.sh.bak
+nohup.out

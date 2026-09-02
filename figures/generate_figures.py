@@ -151,7 +151,7 @@ def _save_figure(fig, name: str, width: float = 3.4, height: float = None):
 def _read_csv_table(path: Path) -> pd.DataFrame:
     """Read a CSV table from the results dir."""
     if not path.exists():
-        print(f'  ⚠ File not found: {path}')
+        print(f'  [WARN] File not found: {path}')
         return None
     df = pd.read_csv(path)
     df.columns = df.columns.str.strip()
@@ -188,14 +188,14 @@ def _load_per_epoch_data() -> dict:
     """Load per-epoch weighted R² data for MLP validation curves."""
     path = EXPERIMENT_2_DIR / 'per_epoch_metrics_3protocols.pt'
     if not path.exists():
-        print(f'  ⚠ Per-epoch data not found at {path}')
+        print(f'  [WARN] Per-epoch data not found at {path}')
         return None
     try:
         import torch
         data = torch.load(path, map_location='cpu', weights_only=False)
         return data
     except ImportError:
-        print('  ⚠ torch not available. Install torch or use system Python with torch.')
+        print('  [WARN] torch not available. Install torch or use system Python with torch.')
         return None
 
 
@@ -204,14 +204,14 @@ def _load_full_results(ridge: bool = False) -> dict:
     subdir = EXPERIMENT_2_RIDGE_DIR if ridge else EXPERIMENT_2_DIR
     path = subdir / 'full_results.pt'
     if not path.exists():
-        print(f'  ⚠ Full results not found at {path}')
+        print(f'  [WARN] Full results not found at {path}')
         return None
     try:
         import torch
         data = torch.load(path, map_location='cpu', weights_only=False)
         return data
     except ImportError:
-        print('  ⚠ torch not available.')
+        print('  [WARN] torch not available.')
         return None
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -232,7 +232,7 @@ def generate_figure_a():
     mlp_hidden_std = np.array([0.013, 0.015, 0.018])
     ridge_local = np.array([0.815, 0.735, 0.749])
     ridge_local_std = np.array([0.009, 0.008, 0.019])
-    ridge_hidden = 0.543
+    ridge_hidden = 0.561
 
     short_names = ['Random CV', 'Date CV', 'Date–State CV']
     proto_colors = ['#348ABD', '#988ED5', '#E24A33']
@@ -335,14 +335,14 @@ def generate_figure_b():
             'date_grouped':          np.array([0.7283, 0.3488, 0.6409, 0.7031, 0.7405]),
             'date_location_grouped': np.array([0.7433, 0.3428, 0.6525, 0.7415, 0.7386]),
         }
-        print('  ℹ Using hardcoded MLP per-target R² values.')
+        print('  [INFO] Using hardcoded MLP per-target R² values.')
     if len(ridge_data) < 3:
         ridge_data = {
             'random_stratified':     np.array([0.8158, 0.5312, 0.7664, 0.7917, 0.7429]),
             'date_grouped':          np.array([0.6877, 0.3023, 0.5812, 0.6681, 0.6550]),
             'date_location_grouped': np.array([0.6994, 0.3464, 0.5721, 0.6870, 0.6749]),
         }
-        print('  ℹ Using hardcoded Ridge per-target R² values.')
+        print('  [INFO] Using hardcoded Ridge per-target R² values.')
 
     # ── Build plot ──────────────────────────────────────────────────────
     fig, (ax_mlp, ax_ridge) = plt.subplots(2, 1, figsize=(5.0, 3.8), sharex=True,
@@ -465,7 +465,7 @@ def generate_figure_d():
     data = _load_full_results(ridge=True)
     if data is None or 'date_location_grouped' not in data:
         print('  ✗ Figure D: Ridge full_results not available.')
-        print('  ℹ To generate LOPO predictions, run:')
+        print('  [INFO] To generate LOPO predictions, run:')
         print('     python scripts/cross_validation.py --split date_location --head ridge')
         return None
 

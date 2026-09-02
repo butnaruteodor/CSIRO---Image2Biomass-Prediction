@@ -41,7 +41,7 @@ class InferencePipeline:
         torch.cuda.empty_cache()
 
         # 3. Load MLP models
-        mlp_models = self.model_loader.load_fold_models()
+        mlp_models = self.model_loader.load_fold_models(seeds=self.config.seeds)
 
         # 4. TTA inference
         tta_transforms = get_tta_transforms(self.config.img_size)

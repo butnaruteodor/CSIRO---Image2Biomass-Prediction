@@ -1,0 +1,14 @@
+{
+  "cv_random": {
+    "median_best_epoch": 30,
+    "n_runs": 25,
+    "min": 11,
+    "max": 67
+  },
+  "cv_date_location": {
+    "median_best_epoch": 21,
+    "n_runs": 25,
+    "min": 3,
+    "max": 58
+  }
+}

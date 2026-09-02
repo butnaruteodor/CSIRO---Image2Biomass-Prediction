@@ -40,8 +40,8 @@ class ModelLoader:
         print(f"  Loaded {bp}")
         return model
 
-    def load_fold_models(self, model_dir=None) -> list:
-        """Load 5 seed/fold MLP models."""
+    def load_fold_models(self, model_dir=None, seeds=None) -> list:
+        """Load seed MLP models, optionally restricted to `seeds`."""
         md = model_dir or self.config.model_dir
         print(f"Loading MLP models from {md}")
 
@@ -50,6 +50,9 @@ class ModelLoader:
                              if f.startswith("seed_") and f.endswith("_final.pt")])
 
         for sf in seed_files:
+            seed = int(sf.split("_")[1])
+            if seeds is not None and seed not in seeds:
+                continue
             ckpt_path = os.path.join(md, sf)
             model = BiomassSimpleMLP(self.config.feature_dim)
             state = torch.load(ckpt_path, map_location=self.device, weights_only=False)

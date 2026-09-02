@@ -1,0 +1,33 @@
+\newpage
+\begin{center}
+    \LARGE
+    \textbf{\thesistitle}
+    
+    \vspace{0.5cm}
+    
+    \authornamefl
+    
+    \vspace{1cm}
+    
+    \textbf{Abstract}
+    
+    \vspace{1cm}
+\end{center}
+
+
+% Proiectul de diplomă/lucrarea de disertație va conține un scurt rezumat (abstract – termenul în engleză) de maximum o pagină, care expune ideile principale ale tezei, contribuția autorului la realizarea temei propuse precum și concluziile obținute. Formulați ideile principale ale lucrării în propoziții sau fraze cât mai simple, fără amănunte nesemnificative. Încercați să atingeți următoarele idei:
+% \begin{itemize}
+%     \item contextul și motivația alegerii temei;
+%     \item obiectivele principale;
+%     \item metodologia utilizată;
+%     \item soluția propusă;
+%     \item rezultatele esențiale și principalele concluzii.
+% \end{itemize}
+
+% Rezumatul ar trebui să fie între 150-250 de cuvinte și să fie urmat de cuvinte-cheie (\textit{keywords}, 5-7 termeni relevanți).
+
+% \textit{Recomandare neoficială: Rezumatul se compune, de obicei, după ce ați terminat redactarea lucrării de licență/disertație, după finalizarea capitolului Concluzii}
+
+Accurate biomass estimation from pasture imagery is an important task in precision agriculture. While recent deep learning approaches have improved predictive performance, the reliability of validation protocols used to estimate performance on unseen data remains insufficiently studied. This issue is particularly relevant for agricultural datasets affected by temporal and spatial distribution shifts.
+In this paper, we investigate the impact of validation design using the CSIRO Image2Biomass dataset. A prediction pipeline based on frozen DINOv3 embeddings and a lightweight multi-target regression network is evaluated under three validation protocols: Random Cross-Validation, Date Cross-Validation, and Date-State Cross-Validation. The protocols are compared in terms of local validation performance, selected stopping epoch, and hidden-test (private leaderboard) performance obtained through Kaggle submissions.
+The results show that Random Cross-Validation substantially overestimates hidden-test performance, while grouped protocols provide more conservative but still optimistic estimates. Despite large differences in local validation scores, the resulting hidden-test performance remains relatively similar across protocols. These findings highlight the importance of validation design for assessing model reliability under distribution shift in agricultural computer vision applications.

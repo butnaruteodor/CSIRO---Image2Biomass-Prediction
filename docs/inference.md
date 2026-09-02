@@ -36,6 +36,13 @@ final_prediction = mean(predictions from seed_13, seed_21, ..., seed_101)
 
 This reduces variance and typically improves weighted R² by 0.01–0.02 over single models.
 
+Per-seed submissions (one CSV per seed, as used for the hidden-test analysis)
+are produced by restricting the ensemble to a single model:
+
+```bash
+python scripts/run_inference.py --seeds 13    # writes submission_seed_13.csv
+```
+
 ## Submission Format
 
 Output: `submission.csv`

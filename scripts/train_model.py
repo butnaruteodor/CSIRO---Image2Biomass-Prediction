@@ -23,7 +23,8 @@ from tqdm import tqdm
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.config import CFG
 from src.deterministic import set_seed, seed_worker, get_generator
-from src.data.preprocessing import get_df, EmbeddingAugmentationDataset
+from src.data.preprocessing import get_df
+from src.data.dataset import EmbeddingAugmentationDataset
 from src.models.factory import HeadFactory
 from src.evaluation.metrics import global_weighted_r2_score, print_metrics_table, all_metrics
 
@@ -79,9 +80,8 @@ def train_mlp(loader, epochs=80, lr=1e-3, wd=1e-2, seed=42):
             print(f"  Epoch {epoch:02d}/{epochs} | Loss {train_loss:.5f}")
     return model
 
-def train_ridge(loader, alpha=1.0):
-    from sklearn.linear_model import Ridge
-    from sklearn.multioutput import MultiOutputRegressor
+def train_ridge(loader):
+    """Fit one RidgeCV regressor per target on all collected features."""
     print("  Collecting all features for sklearn training...")
     all_feats, all_targets = [], []
     for feats, targets in tqdm(loader, desc="collect"):
@@ -90,7 +90,10 @@ def train_ridge(loader, alpha=1.0):
     X = np.concatenate(all_feats, axis=0)
     y = np.concatenate(all_targets, axis=0)
     print(f"  Training Ridge on {X.shape[0]} samples...")
-    model = MultiOutputRegressor(Ridge(alpha=alpha)).fit(X, y)
+    model = HeadFactory.create("ridge")
+    model.fit(X, y)
+    alphas = [float(est.alpha_) for est in model.estimators_]
+    print(f"  RidgeCV-selected alphas: {alphas}")
     return model
 
 def main():

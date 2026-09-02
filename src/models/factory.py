@@ -4,9 +4,8 @@ Head factory for easy switching between model heads.
 Usage:
     factory = HeadFactory()
     model = factory.create("mlp", feature_dim=2048)
-    model = factory.create("ridge", alpha=1.0)
+    model = factory.create("ridge")
 """
-from sklearn.linear_model import Ridge
 from sklearn.multioutput import MultiOutputRegressor
 from src.models.heads import BiomassSimpleMLP
 
@@ -28,7 +27,7 @@ class HeadFactory:
             device: torch device
 
         Ridge kwargs:
-            alpha (float): Regularization strength (default: 1.0)
+            alphas (tuple): Candidate regularization strengths for RidgeCV
             device: ignored, sklearn runs on CPU
         """
         if head_type == "mlp":
@@ -48,6 +47,13 @@ def _create_mlp(feature_dim=2048, device=None, **_):
     return model
 
 
-def _create_ridge(alpha=1.0, **_):
-    """Create a Ridge regression head (sklearn)."""
-    return MultiOutputRegressor(Ridge(alpha=alpha))
+def _create_ridge(alphas=(1e-3, 1e-2, 1e-1, 1.0, 10.0, 100.0, 1000.0), **_):
+    """
+    Create a Ridge regression head (sklearn).
+
+    One RidgeCV regressor is fitted per target via MultiOutputRegressor;
+    the regularization parameter is selected from `alphas` by internal
+    cross-validation.
+    """
+    from sklearn.linear_model import RidgeCV
+    return MultiOutputRegressor(RidgeCV(alphas=list(alphas)))

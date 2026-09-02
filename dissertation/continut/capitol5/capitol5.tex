@@ -1,0 +1,87 @@
+\chapter{Conclusion}
+\label{cap:cap5}
+
+% Concluziile lucrării (1–2 pagini) în care se regăsesc cele mai importante concluzii din lucrare, care pornind de la obiectivele propuse în introducerea lucrării vor conține opinia personală a autorului privind rezultatele obținute în lucrare, o comparație a acestora cu alte proiecte/produse similare precum și posibile direcții de dezvoltare. 
+
+% \begin{itemize}
+%     \item Gradul în care s-a realizat tema propusă (motivarea eventualelor obiective modificate);
+%     \item Evidențierea concisă a contribuțiilor/soluțiilor personale (dacă este cazul);
+%     \item Comparație cu alte proiecte similare;
+%     \item Posibile direcții de dezvoltare.
+% \end{itemize}
+
+% În acest capitol nu se introduc figuri, table sau listing-uri de cod. Pot fi în schimb referite!
+
+% Concluziile finale au un rol semnificativ în cadrul lucrării de diplomă, care trebuie pus în evidență în special în momentul susținerii acesteia în fața comisiei. Aici trebuie prezentate, în câteva pagini, cele mai importante rezultate ale muncii depuse de candidat și potențiale direcții de dezvoltare ulterioară a temei abordate. Acest capitol oferă o sinteză a realizărilor obținute, precum și avantajele și neajunsurile soluțiilor alese. Concluziile nu trebuie să aducă rezultate sau interpretări noi, ci doar să le evidențieze pe cele din conținutul lucrării.
+
+% \section{Direcții viitoare de dezvoltare}
+% \label{cap:cap5:directii-viitoare}
+
+% \section{Lecții învățate pe parcursul dezvoltării proiectului de diplomă}
+
+% Ar fi interesant dacă acest capitol s-ar încheia cu o astfel de secțiune, în mod special la licență.
+
+% Prezenta lucrare a avut ca obiectiv analiza fiabilității diferitelor protocoale de validare utilizate pentru estimarea performanței modelelor de inteligență artificială aplicate în problema estimării biomasei din imagini. Motivația principală a cercetării a fost faptul că performanțele raportate în literatura de specialitate sunt evaluate de cele mai multe ori prin proceduri standard de validare, fără a analiza în ce măsură acestea reflectă performanța reală pe date nevăzute și afectate de schimbări temporale sau spațiale.
+
+% Pentru atingerea acestui obiectiv a fost implementat un pipeline experimental bazat pe reprezentări vizuale extrase cu modelul DINOv3 și pe două modele de regresie, Ridge Regression și Multi-Layer Perceptron. Acest cadru experimental a permis compararea mai multor strategii de validare în condiții controlate, toate experimentele utilizând aceeași bază de date, aceleași reprezentări și aceiași parametri de antrenare, diferența fiind reprezentată exclusiv de modul de împărțire a datelor.
+
+% Rezultatele obținute confirmă faptul că alegerea protocolului de validare influențează semnificativ estimarea performanței unui model. Protocolul Random Cross-Validation a produs constant cele mai ridicate scoruri locale, însă și cele mai mari diferențe față de performanța observată pe setul de test ascuns. Acest rezultat indică faptul că validarea aleatorie tinde să supraestimeze capacitatea de generalizare a modelelor atunci când datele conțin dependențe temporale sau spațiale.
+
+% Protocoalele bazate pe gruparea observațiilor după data de achiziție sau după combinația dată-stat au oferit estimări mai conservatoare și mai apropiate de performanța reală. Cu toate acestea, analiza a arătat că și aceste protocoale rămân optimiste în raport cu rezultatele obținute pe setul de test ascuns. Astfel, deși gruparea reduce efectele de scurgere a informației între datele de antrenare și cele de validare, ea nu elimină complet diferențele de distribuție existente între datele publice și cele utilizate pentru evaluarea finală.
+
+% Un rezultat important al lucrării este faptul că efectul observat apare atât pentru modelul MLP, cât și pentru modelul Ridge. Acest lucru sugerează că principala sursă a optimismului nu este reprezentată de complexitatea modelului, ci de strategia de validare utilizată. În opinia autorului, acest aspect este una dintre cele mai relevante concluzii ale studiului, deoarece evidențiază faptul că îmbunătățirea performanței unui model nu este suficientă dacă metodologia de evaluare nu oferă o imagine realistă asupra comportamentului acestuia în condiții reale de utilizare.
+
+% Analiza realizată la nivel individual pentru fiecare componentă a biomasei a evidențiat că impactul protocolului de validare nu este uniform. Variabilele caracterizate prin distribuții puternic dezechilibrate și variabilitate ridicată au fost afectate mai puternic de introducerea constrângerilor temporale, în timp ce biomasa totală a rămas relativ stabilă. Acest rezultat sugerează că anumite componente ale biomasei sunt mai sensibile la schimbările de distribuție și depind într-o măsură mai mare de caracteristicile specifice fiecărei campanii de colectare.
+
+% Evaluarea suplimentară prin metoda Leave-One-Period-Out a confirmat că dificultatea generalizării nu este uniformă nici măcar în interiorul datelor provenite din același an. Rezultatele au arătat că separarea completă a unor intervale temporale conduce la performanțe mai reduse decât cele estimate prin validarea încrucișată standard, ceea ce susține concluzia că schimbările temporale reprezintă o sursă importantă a diferenței dintre performanța locală și performanța obținută pe date cu adevărat nevăzute.
+
+% Comparativ cu majoritatea lucrărilor și soluțiilor publicate pentru benchmark-ul CSIRO Image2Biomass, care se concentrează în principal pe îmbunătățirea performanței predictive prin utilizarea unor modele mai complexe sau a unor reprezentări vizuale mai puternice, contribuția acestei lucrări constă în analiza critică a metodologiei de evaluare. Rezultatele obținute sugerează că alegerea protocolului de validare poate avea un impact comparabil sau chiar mai important decât alegerea modelului utilizat.
+
+% Principalele contribuții ale lucrării pot fi sintetizate astfel:
+
+%     \begin{itemize}
+%     \item implementarea unui pipeline experimental pentru evaluarea strategiilor de validare în problema estimării biomasei.
+%     \item compararea sistematică a protocoalelor Random CV, Date CV și Date-State CV.
+%     \item cuantificarea optimismului validării prin raportare la performanța obținută pe setul de test ascuns.
+%     \item analiza influenței schimbărilor temporale asupra capacității de generalizare.
+%     \item evidențierea limitărilor metodelor clasice de validare în prezența dependențelor temporale și spațiale.
+%     \end{itemize}
+
+% Lucrarea prezintă și câteva limitări. Studiul a fost realizat pe un singur benchmark și a utilizat un singur extractor de caracteristici, respectiv DINOv3 ViT-L/16. De asemenea, lipsa accesului la etichetele și metadatele setului de test ascuns împiedică investigarea detaliată a cauzelor exacte care generează diferențele observate între validarea locală și evaluarea finală.
+
+% Ca direcții viitoare de cercetare, ar fi utilă extinderea analizei către alte seturi de date din domeniul agricol, pentru a verifica dacă observațiile identificate în această lucrare se mențin și în alte contexte. De asemenea, ar putea fi investigate protocoale de validare spațială mai avansate, metode de adaptare la schimbări de distribuție, precum și utilizarea metadatelor de mediu sau climatice pentru îmbunătățirea generalizării. O altă direcție interesantă constă în compararea mai multor extractoare vizuale moderne și în evaluarea modului în care acestea influențează relația dintre performanța locală și performanța reală pe date nevăzute.
+
+% În concluzie, rezultatele obținute demonstrează că evaluarea unui model este la fel de importantă ca modelul însuși. În cazul seturilor de date agricole afectate de dependențe temporale și spațiale, utilizarea validării aleatorii poate conduce la estimări excesiv de optimiste ale performanței. Protocoalele de validare bazate pe grupare oferă estimări mai realiste, însă nu elimină complet riscul supraevaluării. Din acest motiv, alegerea unei strategii de validare adecvate trebuie să reprezinte o componentă esențială a oricărui studiu care urmărește dezvoltarea și evaluarea sistemelor de inteligență artificială pentru estimarea biomasei.
+
+
+The present work aimed to analyze the reliability of different validation protocols used for estimating the performance of artificial intelligence models applied to the problem of biomass estimation from images. The main motivation for the research was the fact that the performances reported in the literature are mostly evaluated using standard validation procedures, without analyzing to what extent they reflect the actual performance on unseen data affected by temporal or spatial shifts.
+
+To achieve this objective, an experimental pipeline was implemented based on visual representations extracted with the DINOv3 model and two regression models, Ridge Regression and Multi-Layer Perceptron. This experimental framework enabled the comparison of several validation strategies under controlled conditions, with all experiments using the same database, the same representations, and the same training parameters, the only difference being the data splitting method.
+
+The obtained results confirm that the choice of validation protocol significantly influences the performance estimation of a model. The Random Cross-Validation protocol consistently produced the highest local scores, but also the largest discrepancies compared to the performance observed on the hidden test set. This result indicates that random validation tends to overestimate the generalization ability of models when the data contain temporal or spatial dependencies.
+
+Protocols based on grouping observations by acquisition date or by the date-state combination provided more conservative estimates and closer to the actual performance. However, the analysis showed that these protocols also remain optimistic relative to the results obtained on the hidden test set. Thus, although grouping reduces the effects of information leakage between training and validation data, it does not completely eliminate the distribution shifts existing between the public data and the data used for final evaluation.
+
+An important result of this work is that the observed effect appears for both the MLP model and the Ridge model. This suggests that the main source of optimism is not the model's complexity, but rather the validation strategy used. In the author's opinion, this is one of the most relevant conclusions of the study, as it highlights that improving a model's performance is not sufficient if the evaluation methodology does not provide a realistic picture of its behavior under real-world operating conditions.
+
+The analysis conducted at the individual level for each biomass component revealed that the impact of the validation protocol is not uniform. Variables characterized by highly skewed distributions and high variability were more strongly affected by the introduction of temporal constraints, while total biomass remained relatively stable. This result suggests that certain biomass components are more sensitive to distribution shifts and depend to a greater extent on the specific characteristics of each collection campaign.
+
+The additional evaluation using the Leave-One-Period-Out method confirmed that the difficulty of generalization is not uniform even within data originating from the same year. The results showed that the complete separation of certain time intervals leads to lower performances than those estimated through standard cross-validation, which supports the conclusion that temporal shifts represent an important source of the discrepancy between local performance and performance obtained on truly unseen data.
+
+Compared to most published works and solutions for the CSIRO Image2Biomass benchmark, which focus primarily on improving predictive performance through the use of more complex models or stronger visual representations, the contribution of this work lies in the critical analysis of the evaluation methodology. The obtained results suggest that the choice of the validation protocol can have an impact comparable to, or even more important than, the choice of the model used.
+
+The main contributions of this work can be summarized as follows:
+
+    \begin{itemize}
+    \item implementation of an experimental pipeline for evaluating validation strategies in the biomass estimation problem.
+    \item systematic comparison of Random CV, Date CV, and Date-State CV protocols.
+    \item quantification of validation optimism relative to the performance obtained on the hidden test set.
+    \item analysis of the influence of temporal shifts on generalization ability.
+    \item highlighting the limitations of classical validation methods in the presence of temporal and spatial dependencies.
+    \end{itemize}
+
+The work also presents some limitations. The study was conducted on a single benchmark and used a single feature extractor, namely DINOv3 ViT-L/16. Furthermore, the lack of access to the labels and metadata of the hidden test set prevents a detailed investigation of the exact causes generating the observed discrepancies between local validation and the final evaluation.
+
+Beyond improved validation protocols, several complementary directions may help reduce the observed local-to-hidden performance gap, including larger multi-year datasets, the incorporation of auxiliary environmental metadata, and methods that explicitly address distribution shift and uncertainty. The CSIRO Image2Biomass benchmark therefore provides a useful testbed for studying validation reliability under realistic distribution shifts. Future work will investigate whether the same observations hold across additional agricultural datasets and alternative visual feature extractors.
+
+In conclusion, the obtained results demonstrate that evaluating a model is just as important as the model itself. In the case of agricultural datasets affected by temporal and spatial dependencies, the use of random validation can lead to overly optimistic performance estimates. Grouping-based validation protocols provide more realistic estimates, but they do not completely eliminate the risk of overestimation. For this reason, the choice of an appropriate validation strategy must be an essential component of any study aiming to develop and evaluate artificial intelligence systems for biomass estimation.

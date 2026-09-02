@@ -2,19 +2,19 @@
 
 ## Loss Function
 
-The loss combines MSE and L1 losses weighted by target importance:
+The loss is a weighted mean squared error following the weighting scheme of
+the official competition metric (weights for Green, Dead, Clover, GDM, Total):
 
-| Target | Loss | Training Weight | Validation Weight |
-|--------|------|-----------------|-------------------|
-| Dry_Total_g | MSE | 1.0 | 0.5 |
-| GDM_g | MSE | 1.0 | 0.2 |
-| Dry_Green_g | MSE | 1.0 | 0.1 |
-| Dry_Clover_g | L1 | 1.0 | 0.1 |
-| Dry_Dead_g | L1 | 1.0 | 0.1 |
+| Target | Loss | Weight |
+|--------|------|--------|
+| Dry_Total_g | MSE | 0.5 |
+| GDM_g | MSE | 0.2 |
+| Dry_Green_g | MSE | 0.1 |
+| Dry_Clover_g | MSE | 0.1 |
+| Dry_Dead_g | MSE | 0.1 |
 
-Reasons:
-- **MSE** for Total, GDM, Green — smooth, non-sparse targets with meaningful variance
-- **L1** for Clover, Dead — sparse targets where many values are near zero; L1 reduces sensitivity to outliers
+The weights are defined once in `src/config.py` (`R2_WEIGHTS_TRAIN` /
+`R2_WEIGHTS_VAL`) and shared by the loss and the evaluation metric.
 
 ## Optimizer
 
@@ -47,15 +47,18 @@ python scripts/cross_validation.py --split date_location --head mlp --seeds 13 2
 
 ## Full-Data Training
 
-After CV, train on all 357 samples:
+After CV, the stopping epoch per protocol is the median of the best epochs
+over all 25 runs; the final models are then retrained on all 357 samples
+with that duration:
 
 ```bash
-python scripts/train_model.py --head mlp --seeds 13 21 42 87 101
+python scripts/analysis/stopping_epochs.py --results results/cv_date_location/full_results.pt
+python scripts/train_model.py --head mlp --epochs <median> --seeds 13 21 42 87 101
 ```
 
 - No validation split; all data used for training
 - Same hyperparameters as CV
-- 5 independent seed models for ensemble
+- 5 independent seed models for per-seed submissions and ensembling
 
 ## Reproducibility
 

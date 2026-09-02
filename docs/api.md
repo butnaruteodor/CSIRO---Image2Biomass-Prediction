@@ -26,21 +26,21 @@ Key parameters: `model_name`, `img_size`, `batch_size`, `epochs`, `lr`, `wd`, `s
 |---|---|
 | `augmentations.py` | `get_val_transforms()`, `get_spatial_transforms()`, `get_photometric_transforms()`, `get_tta_transforms()` |
 | `dataset.py` | `BiomassDatasetBase`, `EmbeddingAugmentationDataset`, `TestBiomassDataset`, `fast_slice_resize_image()` |
-| `preprocessing.py` | `get_df()`, `check_splits()`, `get_random_stratified_splits()`, `get_date_grouped_splits()`, `get_date_location_grouped_splits()`, `load_embeddings_for_split()`, `extract_test_embeddings()`, `get_plant_neighbor_map()` |
+| `preprocessing.py` | `get_df()`, `check_splits()`, `get_random_stratified_splits()`, `get_date_grouped_splits()`, `get_date_location_grouped_splits()`, `get_lopo_splits()`, `load_embeddings_for_split()`, `extract_test_embeddings()`, `get_plant_neighbor_map()` |
 
 ### `src.models`
 
 | Module | Key Classes/Objects |
 |---|---|
 | `backbone.py` | `BackboneModel` — Two-stream feature extractor |
-| `heads.py` | `BiomassSimpleMLP` — 4-head MLP, `BiomassModelMLP` (legacy), `PerceiverResampler`, `ConvNeXtBlock`, `BiAttnBlock`, `BiomassMLPBlock` |
+| `heads.py` | `BiomassSimpleMLP` — 5-branch MLP (one Softplus branch per target) |
 | `factory.py` | `HeadFactory.create(head_type, **kwargs)` — Creates MLP or Ridge heads |
 
 ### `src.training`
 
 | Module | Key Functions |
 |---|---|
-| `loss.py` | `weighted_biomass_loss()`, `weighted_biomass_log_loss()`, `calculate_deltas()` |
+| `loss.py` | `weighted_biomass_loss()` — weighted MSE with official metric weights |
 | `trainer.py` | `train_epoch_mlp()`, `valid_epoch_mlp()` |
 
 ### `src.evaluation`
@@ -65,7 +65,7 @@ Key parameters: `model_name`, `img_size`, `batch_size`, `epochs`, `lr`, `wd`, `s
 
 | Module | Key Functions |
 |---|---|
-| `helpers.py` | `compare_structure()`, `get_clean_timm_state_dict()`, `calculate_biomass_priors()`, `init_ratio_biases()`, `slerp()` |
+| `helpers.py` | `compare_structure()` — checkpoint structure comparison |
 
 ## Scripts: `scripts/`
 
@@ -74,15 +74,17 @@ Key parameters: `model_name`, `img_size`, `batch_size`, `epochs`, `lr`, `wd`, `s
 | `extract_embeddings.py` | Extract backbone features for train/test — run once |
 | `cross_validation.py` | 5-fold CV with configurable split and head |
 | `train_model.py` | Train on all training data, save models |
+| `lopo_cv.py` | Leave-One-Period-Out temporal analysis (MLP or Ridge) |
 | `evaluate_local.py` | Evaluate trained models on test set (needs ground truth) |
-| `run_inference.py` | Full inference → `submission.csv` |
+| `run_inference.py` | Full inference → `submission.csv` (per-seed via `--seeds`) |
 
 ### `scripts/analysis/`
 
 | Script | Description |
 |---|---|
-| `experiment_2_tables.py` | Generate result tables from CV output |
+| `experiment_2_tables.py` | Generate result tables from CV/LOPO output |
 | `experiment_5_analysis.py` | Error analysis from CV predictions |
+| `stopping_epochs.py` | Median stopping epoch per protocol from CV results |
 
 ## Figures: `figures/`
 

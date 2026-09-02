@@ -42,13 +42,12 @@ class TrainingConfig:
     epochs: int = 80
     lr: float = 1e-3
     wd: float = 0.01
-    warmup_epochs: int = 5
     patience: int = 15
     n_aug: int = 15
 
-    # Loss weights
+    # Loss weights (official competition metric weights: Green, Dead, Clover, GDM, Total)
     r2_weights_val: np.ndarray = field(default_factory=lambda: np.array([0.1, 0.1, 0.1, 0.2, 0.5]))
-    r2_weights_train: np.ndarray = field(default_factory=lambda: np.array([1.0, 1.0, 1.0, 1.0, 1.0]))
+    r2_weights_train: np.ndarray = field(default_factory=lambda: np.array([0.1, 0.1, 0.1, 0.2, 0.5]))
 
     # Targets
     target_cols: tuple = ('Dry_Total_g', 'GDM_g', 'Dry_Green_g')
@@ -105,7 +104,8 @@ class InferenceConfig:
     batch_size: int = 8
     num_workers: int = 1
     n_folds: int = 5
-    n_tta: int = 3  # original + HFlip + VFlip
+    n_tta: int = 5  # original, HFlip, VFlip, 180 deg rotation, transpose
+    seeds: Optional[list] = None  # subset of seed models to ensemble (None = all)
 
     # Ensemble weights (MLP-only for clean baseline)
     w_mlp: float = 1.0
@@ -123,37 +123,21 @@ class InferenceConfig:
 # ============================================================================
 class CFG:
     """Legacy config class — delegates to TrainingConfig for new code."""
+
     BASE_PATH = 'csiro-biomass'
     TRAIN_CSV = os.path.join(BASE_PATH, 'train.csv')
     TRAIN_IMAGE_DIR = os.path.join(BASE_PATH, 'train')
-    MODEL_DIR = 'out'
+
     N_FOLDS = 5
-    LOG = False
 
     # TIMM
     MODEL_NAME = 'vit_large_patch16_dinov3'
-    PATIENCE = 20
-
-    # CLIP (legacy)
-    CLIP_NAME = 'convnext_base_w'
-    CLIP_FT_NAME = "laion2b_s13b_b82k_augreg"
-    CLIP_PATIENCE = 10
-    CLIP_EPOCHS = 50
-    CLIP_WD = 0.01
 
     CHECKPOINT_PATH = None
     FREEZE_BACKBONE = True
 
     IMG_SIZE = 1008
-    ALPHA_CLIP = 0.1
     BATCH_SIZE = 8
-    GRAD_ACC = 1
-    NUM_WORKERS = 4
-    EPOCHS = 60
-    LR = 1e-3
-    WD = 0.01
-    WARMUP_EPOCHS = 4
-    WARMUP_HEAD_EPOCHS = 5
 
     DETERMINISTIC = True
     SEED = 3858
@@ -161,10 +145,9 @@ class CFG:
     TARGET_COLS = ['Dry_Total_g', 'GDM_g', 'Dry_Green_g']
     DERIVED_COLS = ['Dry_Clover_g', 'Dry_Dead_g']
     ALL_TARGET_COLS = ['Dry_Green_g', 'Dry_Dead_g', 'Dry_Clover_g', 'GDM_g', 'Dry_Total_g']
+
+    # Official competition metric weights: Green, Dead, Clover, GDM, Total
     R2_WEIGHTS_VAL = np.array([0.1, 0.1, 0.1, 0.2, 0.5])
-    R2_WEIGHTS_TRAIN = np.array([1.0, 1.0, 1.0, 1.0, 1.0])
-    W_SPECIES = 0.25
-    W_STATE = 0.25
-    W_CONT = 0.5
+    R2_WEIGHTS_TRAIN = np.array([0.1, 0.1, 0.1, 0.2, 0.5])
 
     DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
