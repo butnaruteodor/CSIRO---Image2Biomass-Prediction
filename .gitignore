@@ -37,3 +37,6 @@ submission*.csv
 # Scratch / logs
 *.sh.bak
 nohup.out
+
+# Dissertation source (maintained on Overleaf, not part of the code archive)
+dissertation/
