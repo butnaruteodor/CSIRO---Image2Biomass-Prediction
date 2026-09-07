@@ -1,0 +1,20 @@
+========================================================================
+MODEL BEHAVIOR ON HIDDEN TEST DATA — QUALITATIVE SUMMARY
+========================================================================
+NOTE: Hidden test data used ONLY for post-hoc visualization of the
+      final model. No model parameters or validation decisions were
+      based on this data.
+
+Model checkpoint : models/seed_101_final.pt (final MLP, Kaggle submission head)
+Features         : frozen DINOv3 ViT-L embeddings + 5-view TTA
+                   (embeddings/test_tta_embeddings.pt, averaged over views)
+Target           : Dry_Total_g (g per quadrat)
+Hidden test size : 805 images
+Weighted R2      : 0.6384 (all 5 targets, official metric weights)
+
+Type               Image ID        True (g)  Pred (g)  Error (g)  Rel. err
+------------------------------------------------------------------------
+Good               ID1904087538        45.7      45.8       +0.1     +0.2%
+Overprediction     ID662248420         35.0      79.2      +44.2   +126.3%
+Underprediction    ID1032056910       161.6      92.8      -68.8    -42.6%
+========================================================================

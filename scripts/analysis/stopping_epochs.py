@@ -7,7 +7,7 @@ recorded across all cross-validation runs (5 folds x 5 seeds = 25 runs).
 The final models are then retrained on the full public dataset using this
 duration:
 
-    python scripts/analysis/stopping_epochs.py --results results/cv_date_location/full_results.pt
+    python scripts/analysis/stopping_epochs.py --results results/cv_date_state/full_results.pt
     python scripts/train_model.py --head mlp --epochs <median>
 """
 import os, sys, json, argparse, warnings

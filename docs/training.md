@@ -37,7 +37,7 @@ Random uniform selection per sample adds diversity without re-running the backbo
 5 seeds × 5 folds per protocol:
 
 ```bash
-python scripts/cross_validation.py --split date_location --head mlp --seeds 13 21 42 87 101
+python scripts/cross_validation.py --split date_state --head mlp --seeds 13 21 42 87 101
 ```
 
 - **80 training epochs** per fold
@@ -52,7 +52,7 @@ over all 25 runs; the final models are then retrained on all 357 samples
 with that duration:
 
 ```bash
-python scripts/analysis/stopping_epochs.py --results results/cv_date_location/full_results.pt
+python scripts/analysis/stopping_epochs.py --results results/cv_date_state/full_results.pt
 python scripts/train_model.py --head mlp --epochs <median> --seeds 13 21 42 87 101
 ```
 

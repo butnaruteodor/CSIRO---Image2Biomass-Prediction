@@ -32,7 +32,7 @@ The targets satisfy: `Dry_Total = Dry_Green + Dry_Dead + Dry_Clover` and `GDM = 
    - Augmented copies ×15 for training diversity
 
 2. **Stage 2 — Regression Head** (trained iteratively):
-   - MLP: 3-layer network with 4 independent heads (Total, GDM, Green, Clover)
+   - MLP: 3-layer network with 5 independent heads (Total, GDM, Green, Clover, Dead)
    - Ridge: sklearn `MultiOutputRegressor` for faster baselines
    - Trains on precomputed embeddings in seconds
 
@@ -48,7 +48,7 @@ The targets satisfy: `Dry_Total = Dry_Green + Dry_Dead + Dry_Clover` and `GDM = 
 | Decision | Rationale |
 |----------|-----------|
 | Frozen backbone | DINOv3 is SSL-pretrained; fine-tuning on 357 samples risks overfitting |
-| 4 heads + derive Dead | Enforces physical constraint (Total = Green + Dead + Clover) |
+| 5 heads | Physical constraints deliberately not enforced to achieve a simpler pipeline |
 | Softplus activation | Guarantees non-negative biomass predictions |
-| Date-location grouped CV | Most realistic evaluation: test on unseen missions |
+| Date-State grouped CV | Most realistic evaluation: test on unseen missions |
 | Embedding augmentation | Simulates lighting/view variation without re-running backbone |

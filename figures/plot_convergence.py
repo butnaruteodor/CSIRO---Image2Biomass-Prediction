@@ -33,7 +33,7 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 PUBLICATION_NAMES = {
     'random_stratified':       'Random CV',
     'date_grouped':            'Date CV',
-    'date_location_grouped':   'Date-State CV',
+    'date_state_grouped':   'Date-State CV',
     'leave_one_period_out':    'LOPO CV',
 }
 
@@ -41,7 +41,7 @@ PUBLICATION_NAMES = {
 PROTOCOL_COLORS = {
     'random_stratified':       '#0072B2',   # blue
     'date_grouped':            '#009E73',   # green
-    'date_location_grouped':   '#D55E00',   # orange / vermillion
+    'date_state_grouped':   '#D55E00',   # orange / vermillion
     'leave_one_period_out':    '#CC79A7',   # reddish pink
 }
 
@@ -119,7 +119,7 @@ def plot_convergence(all_per_epoch):
     # ── Create the plot ──────────────────────────────────────────────────────
     fig, ax = plt.subplots(1, 1, figsize=(7.5, 5.5))
     
-    protocol_order = ['date_location_grouped', 'date_grouped', 'random_stratified', 'leave_one_period_out']
+    protocol_order = ['date_state_grouped', 'date_grouped', 'random_stratified', 'leave_one_period_out']
     
     for protocol_name in protocol_order:
         if protocol_name not in grouped['protocol'].unique():

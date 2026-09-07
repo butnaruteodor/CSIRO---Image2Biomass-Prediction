@@ -23,7 +23,7 @@
                     ┌─────────────▼─────────────┐
                     │ Step 2: Cross-Validation  │
                     │ cross_validation.py       │
-                    │  --split date_location    │
+                    │  --split date_state       │
                     │  --head mlp               │
                     │  --seeds 13 21 42 87 101  │
                     │                           │
@@ -69,11 +69,11 @@ python scripts/extract_embeddings.py --mode test
 ### Step 2: Cross-Validation
 
 ```bash
-# Primary protocol: date-location grouped CV with MLP
-python scripts/cross_validation.py --split date_location --head mlp --seeds 13 21 42 87 101
+# date-state grouped CV with MLP
+python scripts/cross_validation.py --split date_state --head mlp --seeds 13 21 42 87 101
 
 # Alternative: Ridge regression
-python scripts/cross_validation.py --split date_location --head ridge
+python scripts/cross_validation.py --split date_state --head ridge
 ```
 
 ### Step 3: Train Final Models
@@ -93,10 +93,10 @@ python scripts/train_model.py --head ridge --seeds 13 21 42 87 101
 python scripts/evaluate_local.py
 
 # Analysis of CV results
-python scripts/analysis/experiment_5_analysis.py --results results/cv_date_location/full_results.pt
+python scripts/analysis/experiment_5_analysis.py --results results/cv_date_state/full_results.pt
 
 # Generate tables
-python scripts/analysis/experiment_2_tables.py --results results/cv_date_location/full_results.pt
+python scripts/analysis/experiment_2_tables.py --results results/cv_date_state/full_results.pt
 ```
 
 ### Step 5: Submission
@@ -109,7 +109,7 @@ python scripts/run_inference.py --img-size 1008
 
 ```
 results/
-├── cv_date_location/
+├── cv_date_state/
 │   └── full_results.pt          # All fold predictions + metrics
 ├── submission_models/
 │   ├── seed_13_final.pt

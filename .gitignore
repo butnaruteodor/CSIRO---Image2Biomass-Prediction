@@ -26,6 +26,7 @@ results/**/*.pt
 out/
 deepavance/
 convnext-exp1/
+*.pt
 
 # Generated figures (rebuild with figures/*.py)
 figures/*.pdf

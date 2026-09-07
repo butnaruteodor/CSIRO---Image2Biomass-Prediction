@@ -5,8 +5,8 @@ Runs 5-fold CV for each seed using a chosen split strategy.
 Saves fold predictions and metrics (no table generation).
 
 Usage:
-    # Date-location grouped CV (primary protocol) with MLP
-    python scripts/cross_validation.py --split date_location --head mlp --seeds 13 21 42 87 101
+    # Date-state grouped CV (primary protocol) with MLP
+    python scripts/cross_validation.py --split date_state --head mlp --seeds 13 21 42 87 101
 
     # Random stratified CV with Ridge
     python scripts/cross_validation.py --split random --head ridge
@@ -22,7 +22,7 @@ from tqdm import tqdm
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.config import CFG
 from src.deterministic import set_seed, seed_worker, get_generator
-from src.data.preprocessing import get_df, get_random_stratified_splits, get_date_grouped_splits, get_date_location_grouped_splits
+from src.data.preprocessing import get_df, get_random_stratified_splits, get_date_grouped_splits, get_date_state_grouped_splits
 from src.data.dataset import EmbeddingAugmentationDataset
 from src.models.factory import HeadFactory
 from src.evaluation.metrics import global_weighted_r2_score, per_target_r2_score, TARGET_NAMES
@@ -41,7 +41,7 @@ BATCH_SIZE = 8; GRAD_ACC = 1; N_AUG = 15; N_FOLDS = 5
 SPLIT_FACTORIES = {
     "random": get_random_stratified_splits,
     "date": get_date_grouped_splits,
-    "date_location": get_date_location_grouped_splits,
+    "date_state": get_date_state_grouped_splits,
 }
 
 def train_epoch_ridge(model, loader):
@@ -145,9 +145,9 @@ def cv_seed_ridge(df, splits, seed):
 
 def main():
     parser = argparse.ArgumentParser(description="Cross-validation training")
-    parser.add_argument("--split", type=str, default="date_location",
-                        choices=["random", "date", "date_location"],
-                        help="Split strategy (default: date_location)")
+    parser.add_argument("--split", type=str, default="date_state",
+                        choices=["random", "date", "date_state"],
+                        help="Split strategy (default: date_state)")
     parser.add_argument("--head", type=str, default="mlp", choices=["mlp", "ridge"],
                         help="Model head (default: mlp)")
     parser.add_argument("--seeds", type=int, nargs="+", default=[13, 21, 42, 87, 101])
@@ -158,7 +158,7 @@ def main():
     global EPOCHS
     EPOCHS = args.epochs
     split_name = args.split
-    strategy_key = {"random": "random_stratified", "date": "date_grouped", "date_location": "date_location_grouped"}[split_name]
+    strategy_key = {"random": "random_stratified", "date": "date_grouped", "date_state": "date_state_grouped"}[split_name]
     out_dir = args.output_dir or f"results/cv_{split_name}"
     os.makedirs(out_dir, exist_ok=True)
 

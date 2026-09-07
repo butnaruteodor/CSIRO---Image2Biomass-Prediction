@@ -50,10 +50,10 @@ Options:
 
 ```bash
 # Summary statistics
-python scripts/analysis/experiment_5_analysis.py --results results/cv_date_location/full_results.pt
+python scripts/analysis/experiment_5_analysis.py --results results/cv_date_state/full_results.pt
 
 # Generate tables
-python scripts/analysis/experiment_2_tables.py --results results/cv_date_location/full_results.pt --output results/tables
+python scripts/analysis/experiment_2_tables.py --results results/cv_date_state/full_results.pt --output results/tables
 ```
 
 ## Unit Tests

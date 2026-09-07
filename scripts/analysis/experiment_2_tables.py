@@ -3,7 +3,7 @@
 Generate Tables 8/9/10/11 from saved CV results.
 
 Usage:
-    python scripts/analysis/experiment_2_tables.py --results results/cv_date_location/full_results.pt --output results/tables
+    python scripts/analysis/experiment_2_tables.py --results results/cv_date_state/full_results.pt --output results/tables
 """
 import os, sys, json, warnings
 warnings.filterwarnings("ignore")

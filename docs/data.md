@@ -46,7 +46,7 @@ The `get_df()` function in `src/data/preprocessing.py`:
 2. Pivots to wide format (one row per image, 5 target columns)
 3. Merges metadata (State, Species, Date, NDVI, Height)
 4. Creates cyclic temporal features (sin/cos of day-of-year)
-5. Builds `group` column = `{State}_{Date}` for date-location CV
+5. Builds `group` column = `{State}_{Date}` for date-state CV
 6. Quantizes `Dry_Total_g` into 10 bins for stratified splitting
 
 ## Cross-Validation Splits
@@ -57,9 +57,7 @@ Three strategies are available:
 |----------|----------|--------|---------|
 | Random | `StratifiedKFold` | None | Low (IID assumption) |
 | Date-grouped | `StratifiedGroupKFold` | Date | Medium |
-| **Date-location** | `StratifiedGroupKFold` | State × Date | **High** |
-
-The **date-location grouped** protocol is the primary evaluation method. It ensures that all images from the same mission (same state + date) stay in the same fold, simulating the real scenario of predicting on entirely new field visits.
+| Date-State | `StratifiedGroupKFold` | State × Date | High |
 
 ## Embeddings
 

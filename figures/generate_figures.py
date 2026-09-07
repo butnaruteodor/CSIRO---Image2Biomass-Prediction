@@ -76,7 +76,7 @@ TARGET_SHORT = ['Green', 'Dead', 'Clover', 'GDM', 'Total']
 COLORS = {
     'random_stratified':     '#348ABD',   # blue (Tas)
     'date_grouped':          '#988ED5',   # purple (Vic)
-    'date_location_grouped': '#E24A33',   # red (NSW)
+    'date_state_grouped': '#E24A33',   # red (NSW)
     'lopo':                  '#F5A623',   # gold (WA)
     'mlp':                   '#2c7bb6',   # deeper blue from boxplot scheme
     'ridge':                 '#d7191c',   # red from boxplot scheme
@@ -87,17 +87,17 @@ COLORS = {
 PROTOCOL_LOCAL_COLORS = {
     'random_stratified':     '#6CB5E0',   # lighter blue
     'date_grouped':          '#B8AEE6',   # lighter purple
-    'date_location_grouped': '#F0806C',   # lighter red
+    'date_state_grouped': '#F0806C',   # lighter red
 }
 
 PROTOCOL_DISPLAY = {
     'random_stratified':     'Random CV',
     'date_grouped':          'Date CV',
-    'date_location_grouped': 'Date-State CV',
+    'date_state_grouped': 'Date-State CV',
     'lopo':                  'LOPO CV',
 }
 
-PROTOCOL_ORDER = ['random_stratified', 'date_grouped', 'date_location_grouped']
+PROTOCOL_ORDER = ['random_stratified', 'date_grouped', 'date_state_grouped']
 
 RC_PARAMS = {
     'font.family': 'serif',
@@ -333,14 +333,14 @@ def generate_figure_b():
         mlp_data = {
             'random_stratified':     np.array([0.8343, 0.5608, 0.7996, 0.8077, 0.7858]),
             'date_grouped':          np.array([0.7283, 0.3488, 0.6409, 0.7031, 0.7405]),
-            'date_location_grouped': np.array([0.7433, 0.3428, 0.6525, 0.7415, 0.7386]),
+            'date_state_grouped': np.array([0.7433, 0.3428, 0.6525, 0.7415, 0.7386]),
         }
         print('  [INFO] Using hardcoded MLP per-target R² values.')
     if len(ridge_data) < 3:
         ridge_data = {
             'random_stratified':     np.array([0.8158, 0.5312, 0.7664, 0.7917, 0.7429]),
             'date_grouped':          np.array([0.6877, 0.3023, 0.5812, 0.6681, 0.6550]),
-            'date_location_grouped': np.array([0.6994, 0.3464, 0.5721, 0.6870, 0.6749]),
+            'date_state_grouped': np.array([0.6994, 0.3464, 0.5721, 0.6870, 0.6749]),
         }
         print('  [INFO] Using hardcoded Ridge per-target R² values.')
 
@@ -457,19 +457,19 @@ def generate_figure_c():
 def generate_figure_d():
     """
     Scatter plot of actual vs predicted Dry_Total for LOPO predictions.
-    Constructs predictions from Ridge date_location_grouped fold results
+    Constructs predictions from Ridge date_state_grouped fold results
     by mapping validation indices back to time periods.
     """
     _configure_style()
 
     data = _load_full_results(ridge=True)
-    if data is None or 'date_location_grouped' not in data:
+    if data is None or 'date_state_grouped' not in data:
         print('  ✗ Figure D: Ridge full_results not available.')
         print('  [INFO] To generate LOPO predictions, run:')
-        print('     python scripts/cross_validation.py --split date_location --head ridge')
+        print('     python scripts/cross_validation.py --split date_state --head ridge')
         return None
 
-    fr = data['date_location_grouped']['fold_results']
+    fr = data['date_state_grouped']['fold_results']
 
     # Load dataset to map indices to dates
     train_csv = BASE_DIR / 'csiro-biomass' / 'train.csv'
@@ -617,11 +617,11 @@ def generate_figure_e():
     stop_epochs = {
         'random_stratified':     35,
         'date_grouped':          29,
-        'date_location_grouped': 20,
+        'date_state_grouped': 20,
     }
 
     # Y-offset for Stop labels: first and last higher, middle lower to avoid overlap
-    stop_y = {'random_stratified': 0.06, 'date_grouped': 0.03, 'date_location_grouped': 0.06}
+    stop_y = {'random_stratified': 0.06, 'date_grouped': 0.03, 'date_state_grouped': 0.06}
     for protocol, ep in stop_epochs.items():
         color = COLORS[protocol]
         ax.axvline(x=ep, color=color, linestyle='--', linewidth=1.2, alpha=0.8, zorder=2)

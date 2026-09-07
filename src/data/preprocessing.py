@@ -241,8 +241,8 @@ def get_date_grouped_splits(df, seed):
     return list(sgkf.split(df, bins, groups=dates))
 
 
-def get_date_location_grouped_splits(df, seed):
-    """Date-location grouped 5-fold CV (primary protocol)."""
+def get_date_state_grouped_splits(df, seed):
+    """Date-state grouped 5-fold CV (primary protocol)."""
     groups = df['group']
     bins = pd.qcut(df['Dry_Total_g'], q=5, labels=False, duplicates='drop')
     sgkf = StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=seed)

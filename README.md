@@ -30,10 +30,10 @@ venv/bin/python scripts/extract_embeddings.py --mode train
 venv/bin/python scripts/extract_embeddings.py --mode test
 
 # 4. Cross-validation (repeat with --split random / date for the other protocols)
-venv/bin/python scripts/cross_validation.py --split date_location --head mlp --seeds 13 21 42 87 101
+venv/bin/python scripts/cross_validation.py --split date_state --head mlp --seeds 13 21 42 87 101
 
 # 5. Select the stopping epoch (median over the 25 CV runs) and retrain on all data
-venv/bin/python scripts/analysis/stopping_epochs.py --results results/cv_date_location/full_results.pt
+venv/bin/python scripts/analysis/stopping_epochs.py --results results/cv_date_state/full_results.pt
 venv/bin/python scripts/train_model.py --head mlp --epochs <median> --seeds 13 21 42 87 101
 
 # 6. Leave-One-Period-Out temporal analysis
@@ -94,11 +94,11 @@ by the scripts above.
 
 | Metric | Value |
 |--------|-------|
-| Local OOF weighted R² (date-location grouped, MLP) | 0.794 ± 0.014 |
+| Local OOF weighted R² (date-state grouped, MLP) | 0.794 ± 0.014 |
 | Hidden-test weighted R² (MLP, per protocol) | 0.593 – 0.607 |
 | Hidden-test weighted R² (Ridge) | 0.561 |
 | Seeds | 13, 21, 42, 87, 101 |
-| CV protocols | Random, date-grouped, date-location grouped, LOPO |
+| CV protocols | Random, date-grouped, date-state grouped, LOPO |
 
 ## Citation
 

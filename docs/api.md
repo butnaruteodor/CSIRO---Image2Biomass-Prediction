@@ -26,7 +26,7 @@ Key parameters: `model_name`, `img_size`, `batch_size`, `epochs`, `lr`, `wd`, `s
 |---|---|
 | `augmentations.py` | `get_val_transforms()`, `get_spatial_transforms()`, `get_photometric_transforms()`, `get_tta_transforms()` |
 | `dataset.py` | `BiomassDatasetBase`, `EmbeddingAugmentationDataset`, `TestBiomassDataset`, `fast_slice_resize_image()` |
-| `preprocessing.py` | `get_df()`, `check_splits()`, `get_random_stratified_splits()`, `get_date_grouped_splits()`, `get_date_location_grouped_splits()`, `get_lopo_splits()`, `load_embeddings_for_split()`, `extract_test_embeddings()`, `get_plant_neighbor_map()` |
+| `preprocessing.py` | `get_df()`, `check_splits()`, `get_random_stratified_splits()`, `get_date_grouped_splits()`, `get_date_state_grouped_splits()`, `get_lopo_splits()`, `load_embeddings_for_split()`, `extract_test_embeddings()`, `get_plant_neighbor_map()` |
 
 ### `src.models`
 
