@@ -3,7 +3,7 @@
 Error analysis from saved CV predictions.
 
 Usage:
-    python scripts/analysis/experiment_5_analysis.py --results results/cv_date_location/full_results.pt
+    python scripts/analysis/experiment_5_analysis.py --results results/cv_date_state/full_results.pt
 """
 import os, sys, warnings
 warnings.filterwarnings("ignore")

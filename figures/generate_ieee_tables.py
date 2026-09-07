@@ -47,8 +47,8 @@ TARGET_SHORT = ['Green', 'Dead', 'Clover', 'GDM', 'Total']
 SPLIT_DISPLAY_NAMES = {
     'random_stratified': 'Random stratified 5-fold CV',
     'date_grouped': 'Date-grouped 5-fold CV',
-    'date_location_grouped': 'Date-location grouped 5-fold CV',
-    'date_location_grouped_splits_weighted': 'Date-location grouped (weighted stratify)',
+    'date_state_grouped': 'Date-state grouped 5-fold CV',
+    'date_state_grouped_splits_weighted': 'Date-state grouped (weighted stratify)',
     'leave_one_period_out': 'Leave-one-period-out',
     'leave_one_state_out': 'Leave-one-state-out',
 }
@@ -56,8 +56,8 @@ SPLIT_DISPLAY_NAMES = {
 PROTOCOL_ORDER = [
     'random_stratified',
     'date_grouped',
-    'date_location_grouped',
-    'date_location_grouped_splits_weighted',
+    'date_state_grouped',
+    'date_state_grouped_splits_weighted',
     'leave_one_period_out',
     'leave_one_state_out',
 ]

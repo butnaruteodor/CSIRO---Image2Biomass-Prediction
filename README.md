@@ -45,6 +45,9 @@ venv/bin/python scripts/evaluate_local.py
 # 8. Generate Kaggle submissions (one per seed, or the full ensemble)
 venv/bin/python scripts/run_inference.py --seeds 13
 venv/bin/python scripts/run_inference.py
+
+# The official Kaggle submissions were produced with kaggle_nb.ipynb
+# (frozen backbone + Ridge head, self-contained notebook run on Kaggle)
 ```
 
 ## Project Structure
@@ -81,6 +84,7 @@ venv/bin/python scripts/run_inference.py
 │   └── inference/             # Ensemble inference pipeline
 ├── tests/                     # Unit tests (metrics, loss, model head)
 ├── figures/                   # Figure-generation scripts (outputs gitignored)
+├── kaggle_nb.ipynb            # Self-contained Kaggle inference notebook (Ridge head)
 ├── csiro-biomass/             # Dataset directory (data not versioned; CSVs only)
 ├── embeddings/                # Precomputed features (regenerated locally)
 └── results/                   # Experiment outputs (tables versioned, .pt ignored)

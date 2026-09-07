@@ -105,6 +105,10 @@ python scripts/analysis/experiment_2_tables.py --results results/cv_date_state/f
 python scripts/run_inference.py --img-size 1008
 ```
 
+The official Kaggle submissions were produced with the self-contained
+notebook `kaggle_nb.ipynb` (frozen DINOv3 backbone + Ridge head, run on
+Kaggle) — see [inference.md](inference.md) for details.
+
 ## Output Directory Structure
 
 ```

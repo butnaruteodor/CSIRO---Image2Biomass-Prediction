@@ -78,6 +78,10 @@ Key parameters: `model_name`, `img_size`, `batch_size`, `epochs`, `lr`, `wd`, `s
 | `evaluate_local.py` | Evaluate trained models on test set (needs ground truth) |
 | `run_inference.py` | Full inference → `submission.csv` (per-seed via `--seeds`) |
 
+| Root-level | Description |
+|---|---|
+| `kaggle_nb.ipynb` | Self-contained Kaggle inference notebook (frozen DINOv3 backbone + Ridge head) used for the official competition submissions |
+
 ### `scripts/analysis/`
 
 | Script | Description |

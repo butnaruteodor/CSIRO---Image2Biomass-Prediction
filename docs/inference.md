@@ -12,6 +12,23 @@ The inference pipeline (`src/inference/pipeline.py`) orchestrates:
 6. **Average across seed models** (ensemble)
 7. **Create submission CSV**
 
+## Kaggle Submission Notebook
+
+The official competition submissions were produced with `kaggle_nb.ipynb`,
+a self-contained notebook designed to run on Kaggle (its paths point at
+`/kaggle/input/...`). It uses the same frozen backbone as the local pipeline,
+but a **Ridge** head instead of the MLP ensemble:
+
+1. **Load test data** from `/kaggle/input/csiro-biomass/test.csv`
+2. **Load the frozen DINOv3 ViT-L/16 backbone** (two-stream: left/right crops → 2048-dim embedding)
+3. **Extract embeddings** for the configured TTA views (a single original view was used for the submitted runs)
+4. **Predict** with the Ridge head (`ridge_seed_21.joblib`), average across views, clamp negatives to zero
+5. **Write `submission.csv`** in the long `sample_id,target` format
+
+The local per-seed and ensemble submissions described below are the offline
+equivalent (`scripts/run_inference.py`) and can be used for the hidden-test
+analysis in this repository.
+
 ## Test-Time Augmentation (TTA)
 
 5 TTA transforms applied to each image:
