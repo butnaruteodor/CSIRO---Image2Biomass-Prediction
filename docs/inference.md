@@ -21,7 +21,7 @@ but a **Ridge** head instead of the MLP ensemble:
 
 1. **Load test data** from `/kaggle/input/csiro-biomass/test.csv`
 2. **Load the frozen DINOv3 ViT-L/16 backbone** (two-stream: left/right crops → 2048-dim embedding)
-3. **Extract embeddings** for the configured TTA views (a single original view was used for the submitted runs)
+3. **Extract embeddings** for the configured TTA views — only the **original view** is used here, which is intentional for the Ridge head; the MLP pipeline averages over all 5 TTA views
 4. **Predict** with the Ridge head (`ridge_seed_21.joblib`), average across views, clamp negatives to zero
 5. **Write `submission.csv`** in the long `sample_id,target` format
 
